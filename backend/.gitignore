@@ -1,0 +1,32 @@
+blockchain.db
+blockchain.db.wal
+peer_blockchain.db
+peer_blockchain.db.wal
+env
+
+# Python general
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+*.whl
+*.py[cod]
+*$py.class
+
+# FastAPI and Python dependencies
+.env
+.venv/
+venv/
+env/
+*.env
+pip-wheel-metadata/
+Pipfile.lock
+
+
+
