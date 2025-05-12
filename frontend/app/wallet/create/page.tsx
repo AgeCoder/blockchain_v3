@@ -14,11 +14,10 @@ import { useWallet } from "@/lib/wallet-provider"
 import { LoadingSpinner } from "@/components/ui/loading-spinner"
 
 export default function CreateWalletPage() {
-  const { generateWallet, isLoading } = useWallet()
+  const { generateWallet, isLoading, setWallet } = useWallet()
   const router = useRouter()
   const { toast } = useToast()
-  const [privateKey, setPrivateKey] = useState<string>("")
-  const [address, setAddress] = useState<string>("")
+  const [walletData, setWalletData] = useState<any>()
   const [showPrivateKey, setShowPrivateKey] = useState(false)
   const [step, setStep] = useState<"create" | "backup" | "password">("create")
   const [creatingWallet, setCreatingWallet] = useState(false)
@@ -39,8 +38,15 @@ export default function CreateWalletPage() {
     try {
       setCreatingWallet(true)
       const newWallet = await generateWallet(password)
-      setPrivateKey(newWallet.privateKey)
-      setAddress(newWallet.address)
+      if (!newWallet) {
+        toast({
+          title: "Error",
+          description: "Failed to generate wallet. Please try again.",
+          variant: "destructive",
+        })
+        return
+      }
+      setWalletData(newWallet)
       setStep("backup")
     } catch (error) {
       console.error("Failed to generate wallet:", error)
@@ -55,7 +61,7 @@ export default function CreateWalletPage() {
   }
 
   const copyToClipboard = () => {
-    navigator.clipboard.writeText(privateKey)
+    navigator.clipboard.writeText(walletData.privateKey)
     toast({
       title: "Copied!",
       description: "Private key copied to clipboard",
@@ -64,7 +70,7 @@ export default function CreateWalletPage() {
 
   const downloadPrivateKey = () => {
     const element = document.createElement("a")
-    const file = new Blob([privateKey], { type: "text/plain" })
+    const file = new Blob([walletData.privateKey], { type: "text/plain" })
     element.href = URL.createObjectURL(file)
     element.download = `antig-wallet-${new Date().toISOString()}.txt`
     document.body.appendChild(element)
@@ -77,6 +83,12 @@ export default function CreateWalletPage() {
   }
 
   const continueToWallet = () => {
+    setWallet({
+      address: walletData.address,
+      publicKey: walletData.publicKey,
+      balance: 0,
+      pending_spends: 0,
+    })
     router.push("/dashboard")
   }
 
@@ -214,7 +226,7 @@ export default function CreateWalletPage() {
           <div className="space-y-2">
             <div className="text-sm font-medium">Your Wallet Address:</div>
             <div className="p-3 bg-muted rounded-md font-mono text-xs break-all">
-              {address}
+              {walletData?.address}
             </div>
           </div>
 
@@ -222,7 +234,7 @@ export default function CreateWalletPage() {
             <div className="text-sm font-medium">Your Private Key:</div>
             <div className="relative">
               <div className="p-3 bg-muted rounded-md font-mono text-xs break-all relative">
-                {showPrivateKey ? privateKey : "•".repeat(64)}
+                {showPrivateKey ? walletData.privateKey : "•".repeat(64)}
                 <Button
                   variant="ghost"
                   size="icon"

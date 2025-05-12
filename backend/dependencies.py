@@ -15,7 +15,6 @@ fee_rate_estimator = FeeRateEstimator(blockchain,transaction_pool)
 app.state.blockchain = blockchain
 app.state.transaction_pool = transaction_pool
 app.state.pubsub = pubsub
-app.state.wallet = None
 app.state.fee_rate_estimator = fee_rate_estimator
 
 def get_blockchain():
@@ -26,9 +25,6 @@ def get_transaction_pool():
 
 def get_pubsub():
     return app.state.pubsub
-
-def get_wallet():
-    return app.state.wallet
 
 def get_public_ip():
     try:

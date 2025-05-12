@@ -45,6 +45,10 @@ async def route_mine(
 
     if not request.miner_address:
         raise HTTPException(status_code=400, detail="Miner address is required")
+    
+    if (request.miner_address.startswith("0x") and len(request.miner_address) != 42) or (not request.miner_address.startswith("0x") and len(request.miner_address) != 40):
+        raise HTTPException(status_code=400, detail="Invalid miner address format")
+
     valid_transactions = []
     total_fees = 0
     for tx in transaction_pool.get_priority_transactions():
@@ -205,20 +209,26 @@ async def route_blockchain_tx(tx_id: str, blockchain: Blockchain = BlockchainDep
 
 @router.get("/fee-rate", response_model=FeeRateResponse, status_code=200)
 async def route_fee_rate(
-    fee_rate_estimator: FeeRateEstimator = FeeRateEstimatorDep,
-    blockchain: Blockchain = BlockchainDep
+    fee_rate_estimator: FeeRateEstimator = FeeRateEstimatorDep
 ):
-    fee_rate = fee_rate_estimator.get_fee_rate()
+    # Ensure the fee rate is up to date before returning
+    await fee_rate_estimator.update_fee_rate()
+
+    # Pull values from the estimator
+    fee_rate = fee_rate_estimator.current_fee_rate
     mempool_size = len(fee_rate_estimator.transaction_pool.transaction_map)
-    recent_blocks_count = 10
-    recent_blocks = blockchain.chain[-recent_blocks_count:] if len(blockchain.chain) >= recent_blocks_count else blockchain.chain
 
-    total_recent_block_size = 0
-    for block in recent_blocks:
-        total_recent_block_size += sum(tx.get('size', BASE_TX_SIZE) for tx in block.data)
+    # Compute recent block fullness again if needed
+    recent_blocks = fee_rate_estimator.blockchain.chain[-10:] \
+        if len(fee_rate_estimator.blockchain.chain) >= 10 \
+        else fee_rate_estimator.blockchain.chain
 
-    block_fullness = (total_recent_block_size / (len(recent_blocks) * BLOCK_SIZE_LIMIT)) if recent_blocks and BLOCK_SIZE_LIMIT > 0 else 0.0
-
+    total_recent_block_size = sum(
+        sum(len(str(tx)) for tx in block.data)
+        for block in recent_blocks
+    )
+    block_fullness = (total_recent_block_size / (len(recent_blocks) * BLOCK_SIZE_LIMIT)) \
+        if recent_blocks and BLOCK_SIZE_LIMIT > 0 else 0.0
 
     return {
         "fee_rate": fee_rate,
@@ -226,3 +236,4 @@ async def route_fee_rate(
         "mempool_size": mempool_size,
         "block_fullness": block_fullness
     }
+

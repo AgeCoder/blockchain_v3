@@ -19,9 +19,7 @@ interface StoredWallet {
   id: string;
   address: string;
   publicKey: string;
-  encryptedKey: string;
-  iv: string;
-  salt: string;
+  encryptedJson: string;
   balance: number;
   pending_spends: number;
 }
@@ -30,14 +28,14 @@ interface WalletContextType {
   wallet: Omit<Wallet, "privateKey"> | null;
   isLoading: boolean;
   error: string | null;
-  generateWallet: (password: string) => Promise<Omit<Wallet, "privateKey">>;
-  importWallet: (privateKey: string, password: string) => Promise<Omit<Wallet, "privateKey">>;
-  unlockWallet: (password: string) => Promise<Omit<Wallet, "privateKey">>;
+  generateWallet: (passkey: string) => Promise<Omit<Wallet, "privateKey">>;
+  importWallet: (privateKey: string, passkey: string) => Promise<Omit<Wallet, "privateKey">>;
+  unlockWallet: (passkey: string) => Promise<Omit<Wallet, "privateKey">>;
   signMessage: (message: string) => Promise<string>;
-  verifySignature: (message: string, signature: string, address: string) => Promise<boolean>;
   logout: () => void;
   refreshWallet: (data: Partial<Omit<Wallet, "privateKey">>) => void;
   isUnlocked: boolean;
+  setWallet: React.Dispatch<React.SetStateAction<Omit<Wallet, "privateKey"> | null>>;
 }
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
@@ -60,10 +58,10 @@ async function initDB(): Promise<IDBPDatabase> {
   });
 }
 
-async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
+async function derivePasskeyKey(salt: Uint8Array): Promise<CryptoKey> {
   const keyMaterial = await crypto.subtle.importKey(
     "raw",
-    new TextEncoder().encode(password),
+    new TextEncoder().encode("static-passkey-derivation"),
     "PBKDF2",
     false,
     ["deriveKey"]
@@ -82,36 +80,28 @@ async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey>
   );
 }
 
-async function encryptPrivateKey(
-  privateKey: string,
-  password: string
-): Promise<{ encryptedKey: string; iv: string; salt: string }> {
+async function encryptPasskey(passkey: string): Promise<{ sessionkey: string; iv: string; salt: string }> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const key = await deriveKey(password, salt);
+  const key = await derivePasskeyKey(salt);
   const encrypted = await crypto.subtle.encrypt(
     { name: "AES-GCM", iv },
     key,
-    new TextEncoder().encode(privateKey)
+    new TextEncoder().encode(passkey)
   );
   return {
-    encryptedKey: bytesToHex(new Uint8Array(encrypted)),
+    sessionkey: bytesToHex(new Uint8Array(encrypted)),
     iv: bytesToHex(iv),
     salt: bytesToHex(salt),
   };
 }
 
-async function decryptPrivateKey(
-  encryptedKey: string,
-  iv: string,
-  salt: string,
-  password: string
-): Promise<string> {
-  const key = await deriveKey(password, hexToBytes(salt));
+async function decryptPasskey(sessionkey: string, iv: string, salt: string): Promise<string> {
+  const key = await derivePasskeyKey(hexToBytes(salt));
   const decrypted = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv: hexToBytes(iv) },
     key,
-    hexToBytes(encryptedKey)
+    hexToBytes(sessionkey)
   );
   return new TextDecoder().decode(decrypted);
 }
@@ -125,7 +115,6 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { toast } = useToast();
 
-  // Check if wallet is unlocked on page refresh
   const checkWalletUnlock = async () => {
     if (typeof window !== "undefined") {
       const unlocked = localStorage.getItem("walletUnlocked") === "true";
@@ -134,15 +123,20 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
           const db = await initDB();
           const storedWallet = await db.get(STORE_NAME, "wallet");
           if (storedWallet) {
-            const password = localStorage.getItem("walletPassword");
-            if (password) {
-              await unlockWallet(password);
+            const sessionkey = localStorage.getItem("sessionkey");
+            const Iv = localStorage.getItem("Iv");
+            const minte = localStorage.getItem("minte");
+            if (sessionkey && Iv && minte) {
+              const passkey = await decryptPasskey(sessionkey, Iv, minte);
+              await unlockWallet(passkey);
             }
           }
         } catch (err) {
           console.error("Failed to auto-unlock wallet:", err);
           localStorage.removeItem("walletUnlocked");
-          localStorage.removeItem("walletPassword");
+          localStorage.removeItem("sessionkey");
+          localStorage.removeItem("Iv");
+          localStorage.removeItem("minte");
         }
       }
     }
@@ -163,7 +157,6 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
             pending_spends: storedWallet.pending_spends,
           };
           setWallet(walletData);
-          localStorage.setItem("wallet", JSON.stringify(walletData));
           await checkWalletUnlock();
         }
       } catch (err) {
@@ -177,28 +170,31 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     initializeWallet();
   }, []);
 
-  const generateWallet = async (password: string): Promise<Omit<Wallet, "privateKey">> => {
+  const generateWallet = async (passkey: string): Promise<Omit<Wallet, "privateKey">> => {
     setIsLoading(true);
     try {
+      const db = await initDB();
+      const existingWallet = await db.get(STORE_NAME, "wallet");
+      if (existingWallet) {
+        throw new Error("A wallet already exists. Please log out first.");
+      }
+
       const ethersWallet = ethers.Wallet.createRandom();
       const privateKey = ethersWallet.privateKey;
-      const publicKey = ethersWallet.publicKey;
+      const publicKey = ethersWallet.signingKey.publicKey;
       const address = ethersWallet.address;
 
-      const { encryptedKey, iv, salt } = await encryptPrivateKey(privateKey, password);
+      const encryptedJson = await ethersWallet.encrypt(passkey);
 
-      const newWallet = {
+      const newWallet: StoredWallet = {
         id: "wallet",
         address,
         publicKey,
-        encryptedKey,
-        iv,
-        salt,
+        encryptedJson,
         balance: 0,
         pending_spends: 0,
       };
 
-      const db = await initDB();
       await db.put(STORE_NAME, newWallet);
 
       const walletData = {
@@ -207,29 +203,30 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         balance: 0,
         pending_spends: 0,
       };
-      setWallet(walletData);
-      localStorage.setItem("wallet", JSON.stringify(walletData));
-
       privateKeyRef.current = privateKey;
       setIsUnlocked(true);
       localStorage.setItem("walletUnlocked", "true");
-      localStorage.setItem("walletPassword", password);
 
-      return walletData;
+      const { sessionkey, iv, salt } = await encryptPasskey(passkey);
+      localStorage.setItem("sessionkey", sessionkey);
+      localStorage.setItem("Iv", iv);
+      localStorage.setItem("minte", salt);
+
+      return { ...walletData, privateKey };
     } catch (err) {
       console.error("Wallet generation failed:", err);
       toast({
         title: "Error",
-        description: "Failed to generate wallet",
+        description: err?.message || "Failed to generate wallet",
         variant: "destructive",
       });
-      throw new Error("Failed to generate wallet");
+      throw err;
     } finally {
       setIsLoading(false);
     }
   };
 
-  const importWallet = async (privateKey: string, password: string): Promise<Omit<Wallet, "privateKey">> => {
+  const importWallet = async (privateKey: string, passkey: string): Promise<Omit<Wallet, "privateKey">> => {
     setIsLoading(true);
     try {
       if (!privateKey.startsWith("0x") || !/^[0-9a-fA-F]{64}$/.test(privateKey.replace("0x", ""))) {
@@ -237,54 +234,88 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       }
 
       const ethersWallet = new ethers.Wallet(privateKey);
-      const publicKey = ethersWallet.publicKey;
+      const publicKey = ethersWallet.signingKey.publicKey;
       const address = ethersWallet.address;
 
-      const { encryptedKey, iv, salt } = await encryptPrivateKey(privateKey, password);
-
-      const importedWallet = {
-        id: "wallet",
-        address,
-        publicKey,
-        encryptedKey,
-        iv,
-        salt,
-        balance: 0,
-        pending_spends: 0,
-      };
-
       const db = await initDB();
-      await db.put(STORE_NAME, importedWallet);
+      const storedWallet = await db.get(STORE_NAME, "wallet");
 
-      const walletData = {
-        address,
-        publicKey,
-        balance: 0,
-        pending_spends: 0,
-      };
-      setWallet(walletData);
-      localStorage.setItem("wallet", JSON.stringify(walletData));
+      if (storedWallet) {
+        try {
+          await ethers.Wallet.fromEncryptedJson(storedWallet.encryptedJson, passkey);
+        } catch (err) {
+          throw new Error("Invalid passkey for existing wallet");
+        }
 
-      privateKeyRef.current = privateKey;
-      setIsUnlocked(true);
-      localStorage.setItem("walletUnlocked", "true");
-      localStorage.setItem("walletPassword", password);
+        if (storedWallet.address.toLowerCase() !== address.toLowerCase()) {
+          throw new Error("Imported private key does not match existing wallet address");
+        }
 
-      return walletData;
+        privateKeyRef.current = privateKey;
+        setIsUnlocked(true);
+        localStorage.setItem("walletUnlocked", "true");
+
+        const { sessionkey, iv, salt } = await encryptPasskey(passkey);
+        localStorage.setItem("sessionkey", sessionkey);
+        localStorage.setItem("Iv", iv);
+        localStorage.setItem("minte", salt);
+
+        const walletData = {
+          address: storedWallet.address,
+          publicKey: storedWallet.publicKey,
+          balance: storedWallet.balance,
+          pending_spends: storedWallet.pending_spends,
+        };
+        setWallet(walletData);
+
+        return walletData;
+      } else {
+        const encryptedJson = await ethersWallet.encrypt(passkey);
+
+        const importedWallet: StoredWallet = {
+          id: "wallet",
+          address,
+          publicKey,
+          encryptedJson,
+          balance: 0,
+          pending_spends: 0,
+        };
+
+        await db.put(STORE_NAME, importedWallet);
+
+        const walletData = {
+          address,
+          publicKey,
+          balance: 0,
+          pending_spends: 0,
+        };
+        setWallet(walletData);
+
+        privateKeyRef.current = privateKey;
+        setIsUnlocked(true);
+        localStorage.setItem("walletUnlocked", "true");
+
+        const { sessionkey, iv, salt } = await encryptPasskey(passkey);
+        localStorage.setItem("sessionkey", sessionkey);
+        localStorage.setItem("Iv", iv);
+        localStorage.setItem("minte", salt);
+
+        return walletData;
+      }
     } catch (err) {
       console.error("Wallet import failed:", err);
       toast({
         title: "Error",
-        description: "Failed to import wallet",
+        description: err.message || "Failed to import wallet",
         variant: "destructive",
       });
-      throw new Error("Failed to import wallet");
+      throw err;
     } finally {
       setIsLoading(false);
     }
   };
 
-  const unlockWallet = async (password: string): Promise<Omit<Wallet, "privateKey">> => {
+  const unlockWallet = async (passkey: string): Promise<Omit<Wallet, "privateKey">> => {
     setIsLoading(true);
     try {
       const db = await initDB();
@@ -294,17 +325,17 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         throw new Error("No wallet found");
       }
 
-      const privateKey = await decryptPrivateKey(
-        storedWallet.encryptedKey,
-        storedWallet.iv,
-        storedWallet.salt,
-        password
-      );
+      const ethersWallet = await ethers.Wallet.fromEncryptedJson(storedWallet.encryptedJson, passkey);
+      const privateKey = ethersWallet.privateKey;
 
       privateKeyRef.current = privateKey;
       setIsUnlocked(true);
       localStorage.setItem("walletUnlocked", "true");
-      localStorage.setItem("walletPassword", password);
+
+      const { sessionkey, iv, salt } = await encryptPasskey(passkey);
+      localStorage.setItem("sessionkey", sessionkey);
+      localStorage.setItem("Iv", iv);
+      localStorage.setItem("minte", salt);
 
       return {
         address: storedWallet.address,
@@ -316,10 +347,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       console.error("Wallet unlock failed:", err);
       toast({
         title: "Error",
-        description: "Invalid password or corrupted wallet data",
+        description: "Invalid passkey or corrupted wallet data",
         variant: "destructive",
       });
-      throw new Error("Invalid password or corrupted wallet data");
+      throw new Error("Invalid passkey or corrupted wallet data");
     } finally {
       setIsLoading(false);
     }
@@ -328,9 +359,12 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const signMessage = async (message: string): Promise<string> => {
     if (!wallet) throw new Error("Wallet not initialized");
     if (!privateKeyRef.current) {
-      const password = localStorage.getItem("walletPassword");
-      if (password) {
-        await unlockWallet(password);
+      const sessionkey = localStorage.getItem("sessionkey");
+      const Iv = localStorage.getItem("Iv");
+      const minte = localStorage.getItem("minte");
+      if (sessionkey && Iv && minte) {
+        const passkey = await decryptPasskey(sessionkey, Iv, minte);
+        await unlockWallet(passkey);
       } else {
         throw new Error("Wallet is not unlocked. Please unlock your wallet first.");
       }
@@ -356,31 +390,6 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const verifySignature = async (message: string, signature: string, address: string): Promise<boolean> => {
-    try {
-      const payload = { message, signature, address };
-      const response = await fetch("http://127.0.0.1:5000/api/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        throw new Error("Signature verification failed");
-      }
-
-      const result = await response.json();
-      return result.valid;
-    } catch (err) {
-      console.error("Signature verification failed:", err);
-      toast({
-        title: "Error",
-        description: "Failed to verify signature",
-        variant: "destructive",
-      });
-      return false;
-    }
-  };
 
   const logout = async () => {
     try {
@@ -390,7 +399,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
       localStorage.removeItem("wallet");
       localStorage.removeItem("walletUnlocked");
-      localStorage.removeItem("walletPassword");
+      localStorage.removeItem("sessionkey");
+      localStorage.removeItem("Iv");
+      localStorage.removeItem("minte");
 
       const db = await initDB();
       await db.delete(STORE_NAME, "wallet");
@@ -415,7 +426,6 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     if (wallet) {
       const updatedWallet = { ...wallet, ...data };
       setWallet(updatedWallet);
-      localStorage.setItem("wallet", JSON.stringify(updatedWallet));
     }
   };
 
@@ -429,10 +439,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         importWallet,
         unlockWallet,
         signMessage,
-        verifySignature,
         logout,
         refreshWallet,
         isUnlocked,
+        setWallet
       }}
     >
       {children}

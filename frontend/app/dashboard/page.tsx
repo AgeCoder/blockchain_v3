@@ -226,7 +226,7 @@ const DashboardPage = () => {
     setSendingTx(true);
     try {
       // Construct message to match backend's expected format
-      const message = `${sendForm.recipient}:${amount + 0.00001}:${sendForm.priority}:${wallet.publicKey}`;
+      const message = `${sendForm.recipient}:${amount + 0.00001}:${sendForm.priority}:${wallet?.publicKey ?? ""}`;
 
       console.log("Message for signing:", message);
       if (!message) {
@@ -237,9 +237,9 @@ const DashboardPage = () => {
         recipient: sendForm.recipient,
         amount,
         signature,
-        public_key: wallet.publicKey,
+        public_key: wallet?.publicKey ?? "",
         priority: sendForm.priority,
-        address: wallet.address,
+        address: wallet?.address ?? "",
         message
       };
       await api.wallet.transact(signedTransaction);
@@ -344,7 +344,7 @@ const DashboardPage = () => {
             <CardContent className="space-y-6">
               <div>
                 <Label className="text-xs text-muted-foreground mb-1">Address</Label>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1">
                   <Tooltip>
                     <TooltipTrigger>
                       <p className="font-mono text-sm truncate bg-muted px-3 py-2 rounded-lg flex-1">
@@ -373,9 +373,14 @@ const DashboardPage = () => {
                     {wallet.balance.toFixed(6)} <span className="text-lg text-muted-foreground">ANTIG</span>
                   </div>
                 </div>
-                <div className="flex items-center justify-between">
-                  <div className="text-xs text-muted-foreground">
+                <div className="flex items-center justify-between mt-5">
+                  <div className="text-xs text-muted-foreground text-yellow-500">
                     Pending Spends: {wallet?.pending_spends || 0} ANTIG
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="text-xs  text-green-500">
+                    Avaiable to Spend: {(wallet.balance - (wallet?.pending_spends || 0)).toFixed(6)} ANTIG
                   </div>
                 </div>
               </div>

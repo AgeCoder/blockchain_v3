@@ -89,7 +89,7 @@ class Transaction:
                 self.size = self._calculate_size()
                 self.fee = input.get('fees', 0.0)
                 if not self.fee:
-                     self.fee = max(self.size * self.fee_rate, MIN_FEE)
+                     self.fee = max(BASE_TX_SIZE * self.fee_rate, MIN_FEE)
 
                 total_input_amount = input.get('amount', 0.0)
                 total_output_value = sum(self.output.values())

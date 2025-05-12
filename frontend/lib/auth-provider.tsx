@@ -35,9 +35,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (wallet) {
         setUser({ address: wallet.address })
         setIsAuthenticated(true)
-        // if (publicOnlyRoutes.includes(pathname)) {
-        //   router.push("/dashboard")
-        // }
+        if (publicOnlyRoutes.includes(pathname)) {
+          router.push("/dashboard")
+        }
       } else {
         setUser(null)
         setIsAuthenticated(false)

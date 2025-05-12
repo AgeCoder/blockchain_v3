@@ -9,12 +9,13 @@ import time
 import duckdb
 import gzip
 import aiohttp
+import ssl
 from websockets.exceptions import ConnectionClosedError
 from models.block import Block
 from models.blockchain import Blockchain
 from models.transaction import Transaction
 from models.transaction_pool import TransactionPool
-from core.config import BOOT_NODE, CHUNK_SIZE, CHUNK_TIMEOUT
+from core.config import BOOT_NODE, CHUNK_SIZE, CHUNK_TIMEOUT ,ENV
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,9 @@ class PubSub:
         self.max_retries = 3
         self.websocket_port = 5001 if os.environ.get('PEER') != 'True' else 6001
         self.my_uri = f"ws://{host}:{self.websocket_port}"
+        print(os.environ.get('ENV'))
+        if ENV == 'production':
+            self.my_uri = self.my_uri.replace('ws://', 'wss://')
         self.server = None
         self.loop = None
         self.processed_transactions = set()
@@ -566,63 +570,113 @@ class PubSub:
             self.save_peers()
 
     async def connection_handler(self, websocket):
+        peer_uri = f"wss://{websocket.remote_address[0]}:{websocket.remote_address[1]}"
+        self.peer_nodes[peer_uri] = websocket
+        
         try:
-            peer_uri = f"ws://{websocket.remote_address[0]}:{websocket.remote_address[1]}"
-            self.peer_nodes[peer_uri] = websocket
+            # Initial handshake
             await websocket.send(self.create_message(self.MSG_REQUEST_CHAIN_LENGTH, None))
-            if not self.tx_pool_syncing and time.time() - self.last_tx_pool_request > self.tx_pool_request_cooldown:
-                self.tx_pool_syncing = True
-                await websocket.send(self.create_message(self.MSG_REQUEST_TX_POOL, None))
-                self.last_tx_pool_request = time.time()
-            async for message in websocket:
-                await self.handle_message(message, websocket)
+            
+            # Keep connection alive
+            while True:
+                try:
+                    message = await asyncio.wait_for(websocket.recv(), timeout=60)
+                    await self.handle_message(message, websocket)
+                except asyncio.TimeoutError:
+                    await websocket.ping()
+                    
         except ConnectionClosedError:
             await self.remove_peer(peer_uri)
         except Exception as e:
-            logger.error(f"Error in connection handler for {peer_uri}: {e}")
+            logger.error(f"Connection handler error: {e}")
             await self.remove_peer(peer_uri)
 
     async def register_with_boot_node(self, uri, my_uri, retries=0):
         if retries >= self.max_retries:
             return
+
+        # Determine if we should use SSL
+        use_ssl = uri.startswith('wss://')
+        ssl_context = None
+        
+        if use_ssl:
+            ssl_context = ssl.create_default_context()
+            # For development with self-signed certs
+            if ENV == 'development':
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_NONE
+
         try:
-            websocket = await websockets.connect(uri)
+            connect_uri = uri.replace('wss://', 'ws://') if not use_ssl else uri
+            
+            websocket = await websockets.connect(
+                connect_uri,
+                ssl=ssl_context if use_ssl else None,
+                ping_interval=15,
+                ping_timeout=30,
+                close_timeout=10
+            )
+            
             await websocket.send(self.create_message(self.MSG_REGISTER_PEER, my_uri))
-            async for message in websocket:
-                await self.handle_message(message, websocket)
+            
+            # Keep connection alive
+            while True:
+                try:
+                    message = await asyncio.wait_for(websocket.recv(), timeout=60)
+                    await self.handle_message(message, websocket)
+                except asyncio.TimeoutError:
+                    await websocket.ping()
+                    
         except Exception as e:
-            logger.error(f"Failed to register with boot node: {e}, retry {retries + 1}/{self.max_retries}")
-            await asyncio.sleep(5)
+            logger.error(f"Boot node connection error: {str(e)}")
+            await asyncio.sleep(min(5 * (retries + 1), 30))
             await self.register_with_boot_node(uri, my_uri, retries + 1)
 
     async def connect_to_peer(self, uri, retries=0):
         if uri in self.peer_nodes or retries >= self.max_retries:
-            if retries >= self.max_retries:
-                self.known_peers.discard(uri)
-                self.save_peers()
             return
+
+        # Determine if we should use SSL
+        use_ssl = uri.startswith('wss://')
+        ssl_context = None
+        
+        if use_ssl:
+            ssl_context = ssl.create_default_context()
+            # For development with self-signed certs
+            if ENV == 'development':
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_NONE
+
         try:
-            websocket = await websockets.connect(uri)
+            # Normalize the URI (ws/wss)
+            connect_uri = uri.replace('wss://', 'ws://') if not use_ssl else uri
+            
+            websocket = await websockets.connect(
+                connect_uri,
+                ssl=ssl_context if use_ssl else None,  # Only use SSL if wss://
+                ping_interval=15,
+                ping_timeout=30,
+                close_timeout=10
+            )
+            
+            # Store with original URI
             self.peer_nodes[uri] = websocket
-            try:
-                await websocket.send(self.create_message(self.MSG_REQUEST_CHAIN_LENGTH, None))
-                if not self.tx_pool_syncing and time.time() - self.last_tx_pool_request > self.tx_pool_request_cooldown:
-                    self.tx_pool_syncing = True
-                    await websocket.send(self.create_message(self.MSG_REQUEST_TX_POOL, None))
-                    self.last_tx_pool_request = time.time()
-            except Exception as e:
-                logger.error(f"Failed to send requests to {uri}: {e}")
-                await self.remove_peer(uri)
-                return
-            async for message in websocket:
-                await self.handle_message(message, websocket)
-        except ConnectionClosedError:
-            await self.remove_peer(uri)
-            await asyncio.sleep(10)
-            await self.connect_to_peer(uri, retries + 1)
+            logger.info(f"Successfully connected to peer: {uri}")
+            
+            # Initial handshake
+            await websocket.send(self.create_message(self.MSG_REQUEST_CHAIN_LENGTH, None))
+            
+            # Keep connection alive
+            while True:
+                try:
+                    message = await asyncio.wait_for(websocket.recv(), timeout=60)
+                    await self.handle_message(message, websocket)
+                except asyncio.TimeoutError:
+                    await websocket.ping()
+                    
         except Exception as e:
-            logger.error(f"Failed to connect to {uri}: {e}, retry {retries + 1}/{self.max_retries}")
-            await asyncio.sleep(10)
+            logger.error(f"Peer connection error to {uri}: {str(e)}")
+            await asyncio.sleep(min(5 * (retries + 1), 30))  # Exponential backoff
             await self.connect_to_peer(uri, retries + 1)
 
     async def start_server(self):

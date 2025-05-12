@@ -141,44 +141,7 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Private Key Backup</CardTitle>
-              <CardDescription>Securely backup your private key</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Alert variant="destructive">
-                <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>Warning</AlertTitle>
-                <AlertDescription>
-                  Never share your private key with anyone. Anyone with your private key has full access to your wallet.
-                </AlertDescription>
-              </Alert>
 
-              <div className="relative">
-                <div className="p-3 bg-muted rounded-md font-mono text-xs break-all relative">
-                  {showPrivateKey ? privateKey : "•".repeat(Math.min(privateKey.length, 50))}
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="absolute right-2 top-2"
-                    onClick={() => setShowPrivateKey(!showPrivateKey)}
-                  >
-                    {showPrivateKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </Button>
-                </div>
-              </div>
-
-              <div className="flex gap-2">
-                <Button variant="outline" className="flex-1" onClick={copyToClipboard}>
-                  <Copy className="mr-2 h-4 w-4" /> Copy
-                </Button>
-                <Button variant="outline" className="flex-1" onClick={downloadPrivateKey}>
-                  <Download className="mr-2 h-4 w-4" /> Download
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
         </TabsContent>
 
         <TabsContent value="security" className="space-y-6">

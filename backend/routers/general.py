@@ -9,3 +9,11 @@ PubSubDep = Depends(get_pubsub)
 @router.get("/peers", status_code=200)
 async def get_peers(pubsub: PubSub = PubSubDep):
     return list(pubsub.peer_nodes.keys())
+
+@router.get("/", status_code=200)
+async def get_status():
+    return {"status": "ok"}
+
+@router.get("/health")
+async def health_check():
+    return {"status": "healthy"}

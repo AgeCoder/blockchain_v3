@@ -62,6 +62,7 @@ async def route_wallet_transact(
     pubsub: PubSub = Depends(get_pubsub),
     fee_rate_estimator: FeeRateEstimator = Depends(get_fee_rate_estimator)
 ):
+    print("Received transaction request:", request)
     sender_address = request.address
     base_fee_rate = fee_rate_estimator.get_fee_rate()
     priority_multiplier = PRIORITY_MULTIPLIERS.get(request.priority, 1.0)

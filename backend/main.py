@@ -8,7 +8,7 @@ import socket
 from fastapi import FastAPI
 from uvicorn import Config, Server
 from fastapi.middleware.cors import CORSMiddleware
-from dependencies import app, get_blockchain, get_transaction_pool, get_pubsub
+from dependencies import app, get_blockchain, get_transaction_pool, get_pubsub,get_public_ip
 from core.config import settings
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -28,15 +28,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-def get_public_ip():
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except Exception:
-        return "127.0.0.1"
+# def get_public_ip():
+#     try:
+#         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+#         s.connect(("8.8.8.8", 80))
+#         ip = s.getsockname()[0]
+#         s.close()
+#         return ip
+#     except Exception:
+#         return "127.0.0.1"
 
 async def run_fastapi_server(app: FastAPI, port: int):
     try:
@@ -56,6 +56,7 @@ def handle_shutdown(sig, frame):
         logger.error(f"Error during shutdown handling: {e}")
 
 if __name__ == "__main__":
+    
     os.environ['HOST'] = os.environ.get('HOST', get_public_ip())
     is_peer = settings.peer
     port = settings.root_port if not is_peer else 4000

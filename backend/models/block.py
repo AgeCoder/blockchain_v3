@@ -18,7 +18,7 @@ GENESIS_DATA = {
                 "public_key": "coinbase",
                 "signature": "coinbase",
                 "subsidy": 50,
-                "timestamp": 1
+                "timestamp": 1746707304053502800,
             },
             "is_coinbase": True,
             "output": {
@@ -30,9 +30,9 @@ GENESIS_DATA = {
     ],
     "difficulty": 3,
     "height": 0,
-    "last_hash": "genesis_last_hash",
+    "last_hash": "d89f504b7499128eb40c973e0b5a7ec84e54c65449ae5da894b3dec0b3e2858a",# genesis_last_hash
     "nonce": 0,
-    "timestamp": 1,
+    "timestamp": 1746707304053502800,
     "tx_count": 1,
     "version": 1
 }
@@ -73,6 +73,25 @@ class Block:
             raise ValueError("Block difficulty cannot be less than 1")
         if self.tx_count != len(self.data):
             raise ValueError("Transaction count does not match data length")
+        if not isinstance(self.data, list):
+            raise ValueError("Block data must be a list")
+        if not all(isinstance(tx, dict) for tx in self.data):
+            raise ValueError("All transactions in block data must be dictionaries")
+        if not isinstance(self.hash, str) or len(self.hash) != 64:
+            raise ValueError("Block hash must be a 64-character hexadecimal string")
+        if not isinstance(self.last_hash, str) or len(self.last_hash) != 64:
+            raise ValueError("Last block hash must be a 64-character hexadecimal string")
+        if not isinstance(self.merkle_root, str) or len(self.merkle_root) != 64:
+            raise ValueError("Merkle root must be a 64-character hexadecimal string")
+        if not isinstance(self.nonce, int) or self.nonce < 0:
+            raise ValueError("Nonce must be a non-negative integer")
+        if not isinstance(self.timestamp, int) or self.timestamp < 0:
+            raise ValueError("Timestamp must be a non-negative integer")
+        if not isinstance(self.version, int) or self.version < 1:
+            raise ValueError("Version must be a positive integer")
+        if not isinstance(self.tx_count, int) or self.tx_count < 0:
+            raise ValueError("Transaction count must be a non-negative integer")
+        
 
     def to_json(self):
         return {
@@ -99,11 +118,14 @@ class Block:
 
         timestamp = time.time_ns()
         last_hash = last_block.hash
-        difficulty = Block.adjust_difficulty(last_block, timestamp)
         nonce = 0
         height = last_block.height + 1
         version = 1
         merkle_root = Block.calculate_merkle_root(serialized_data)
+        difficulty = Block.adjust_difficulty(last_block, { 
+            'height': height,
+            'timestamp': timestamp,
+        } )
         tx_count = len(data)
 
         hash = crypto_hash(
@@ -113,7 +135,10 @@ class Block:
         while hex_to_binary(hash)[:difficulty] != '0' * difficulty:
             nonce += 1
             timestamp = time.time_ns()
-            difficulty = Block.adjust_difficulty(last_block, timestamp)
+            difficulty = Block.adjust_difficulty(last_block,{ 
+            'height': height,
+            'timestamp': timestamp,
+        })
             hash = crypto_hash(
                 timestamp, last_hash, serialized_data, difficulty, nonce, height, version, merkle_root, tx_count
             )
@@ -147,32 +172,19 @@ class Block:
 
     @classmethod
     def genesis(cls):
-        genesis_tx = Transaction(
-            id="genesis_initial_tx",
-            input={
-                "address": "coinbase",
-                "block_height": 0,
-                "coinbase_data": "Initial funding",
-                "fees": 0,
-                "public_key": "coinbase",
-                "signature": "coinbase",
-                "subsidy": 50,
-                "timestamp": 1746597308686237000
-            },
-            output={"0xb169392F5D2EbC032cF6afc4645159eE2033C397": 50},
-            is_coinbase=True
-        )
         return cls(
-            timestamp=1,
-            last_hash='genesis_last_hash',
-            hash=crypto_hash(1, 'genesis_last_hash', [genesis_tx.id]),
-            data=[genesis_tx.to_json()],
-            difficulty=3,
-            nonce=0,
-            height=0,
-            version=1,
-            merkle_root=crypto_hash(genesis_tx.id)
+            timestamp=GENESIS_DATA["timestamp"],
+            last_hash=GENESIS_DATA["last_hash"],
+            hash=GENESIS_DATA["hash"],
+            data=GENESIS_DATA["data"],
+            difficulty=GENESIS_DATA["difficulty"],
+            nonce=GENESIS_DATA["nonce"],
+            height=GENESIS_DATA["height"],
+            version=GENESIS_DATA["version"],
+            merkle_root=GENESIS_DATA["merkle_root"],
+            tx_count=GENESIS_DATA["tx_count"]
         )
+
 
     @staticmethod
     def from_json(block_json):
@@ -189,14 +201,55 @@ class Block:
             tx_count=block_json.get('tx_count', len(block_json['data']))
         )
 
+    # @staticmethod
+    # def adjust_difficulty(last_block, new_timestamp):
+    #     time_diff = (new_timestamp - last_block.timestamp) / 1_000_000_000
+    #     if time_diff < MINRATE:
+    #         return last_block.difficulty + 1
+    #     if last_block.difficulty > 1 and time_diff > TARGET_BLOCK_TIME * 2:
+    #         return last_block.difficulty - 1
+    #     return last_block.difficulty
     @staticmethod
-    def adjust_difficulty(last_block, new_timestamp):
-        time_diff = (new_timestamp - last_block.timestamp) / 1_000_000_000
-        if time_diff < MINRATE:
-            return last_block.difficulty + 1
-        if last_block.difficulty > 1 and time_diff > TARGET_BLOCK_TIME * 2:
-            return last_block.difficulty - 1
-        return last_block.difficulty
+    def adjust_difficulty(last_block, new_block):
+        """
+        Adjusts difficulty only every DIFFICULTY_INTERVAL blocks,
+        and only if the time difference exceeds a 5% threshold.
+        """
+        TARGET_BLOCK_TIME = 9  # seconds
+        DIFFICULTY_INTERVAL = 9  # blocks
+        MIN_DIFFICULTY = 1
+        SIGNIFICANT_CHANGE_THRESHOLD = 0.05  # 5%
+        
+        # Only adjust difficulty every N blocks
+        if new_block['height'] % DIFFICULTY_INTERVAL != 0:
+            return last_block.difficulty
+
+        # Calculate time difference in seconds
+        time_diff = (new_block['timestamp'] - last_block.timestamp) / 1_000_000_000
+
+        # Expected total time for interval
+        expected_time = TARGET_BLOCK_TIME * DIFFICULTY_INTERVAL
+
+        # Prevent division by zero
+        time_diff = max(1, time_diff)
+
+        # Calculate proportional change
+        ratio = expected_time / time_diff
+        proposed_difficulty = last_block.difficulty * ratio
+
+        # Check if change exceeds threshold
+        percent_change = abs(proposed_difficulty - last_block.difficulty) / last_block.difficulty
+        if percent_change < SIGNIFICANT_CHANGE_THRESHOLD:
+            return last_block.difficulty
+
+        # Clamp between 0.5x and 2x per interval
+        max_difficulty = last_block.difficulty * 2
+        min_difficulty = max(MIN_DIFFICULTY, last_block.difficulty / 2)
+        new_difficulty = max(min_difficulty, min(max_difficulty, int(proposed_difficulty)))
+
+        return int(new_difficulty)
+
+
 
     @staticmethod
     def is_valid_block(last_block, block):
@@ -208,12 +261,18 @@ class Block:
 
         if hex_to_binary(block.hash)[:block.difficulty] != '0' * block.difficulty:
             raise ValueError("Proof of work requirement not met")
+        #CHANGE MUST NOT GO OVER 5% OF LAST BLOCK DIFFICULTY
+        if block.difficulty > last_block.difficulty * 2 or block.difficulty < last_block.difficulty / 2:
+            raise ValueError("Difficulty adjustment exceeds 5% of last block difficulty")
 
-        if abs(last_block.difficulty - block.difficulty) > 1:
-            raise ValueError("Difficulty adjustment too large")
-
+        if block.timestamp <= last_block.timestamp:
+            raise ValueError("Block timestamp must be greater than last block timestamp")
+        
+        if block.timestamp > time.time_ns():
+            raise ValueError("Block timestamp cannot be in the future")
+        
         if block.height != last_block.height + 1:
-            raise ValueError("Invalid block height")
+            raise ValueError("Block height must be one greater than last block height")
 
         calculated_merkle_root = Block.calculate_merkle_root(block.data)
         if block.merkle_root != calculated_merkle_root:

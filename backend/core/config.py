@@ -1,13 +1,14 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import os
-
+from pydantic import Extra
 class Settings(BaseSettings):
     host: str = "127.0.0.1"
     peer: bool = os.environ.get("PEER", "false").lower() == "true"
-    boot_node: str = "ws://localhost:9000"
+    boot_node: str = "wss://localhost:9000" 
+    # boot_node: str = "wss://boot-node.onrender.com" 
     root_port: int = 5000
     websocket_port: int = 5001
-
+    env: str = 'development'
     BLOCK_SUBSIDY: float = 50.0
     HALVING_INTERVAL: int = 210000
     MINING_REWARD: float = 50.0
@@ -18,7 +19,7 @@ class Settings(BaseSettings):
     BASE_TX_SIZE: int = 250
     MIN_FEE: float = 0.001
     DEFAULT_FEE_RATE: float = 0.00001
-    MEMPOOL_THRESHOLD: int = 1000
+    MEMPOOL_THRESHOLD: int = 10000
     BLOCK_FULLNESS_THRESHOLD: float = 0.8
     FEE_RATE_UPDATE_INTERVAL: int = 60
     PRIORITY_MULTIPLIERS: dict = {
@@ -28,8 +29,8 @@ class Settings(BaseSettings):
     }
 
     MINRATE: float = 30.0
-    BLOCK_SIZE_LIMIT: int = 1000000
     TARGET_BLOCK_TIME: float = 60.0
+    BLOCK_SIZE_LIMIT: int = 1000000
 
     CHUNK_SIZE: int = 100
     CHUNK_TIMEOUT: int = 30
@@ -38,10 +39,14 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra = Extra.allow
     )
 
-settings = Settings()
+    VERSION: int = 1
 
+settings = Settings()
+ENV = settings.env
+VERSION = settings.VERSION
 BLOCK_SUBSIDY = settings.BLOCK_SUBSIDY
 HALVING_INTERVAL = settings.HALVING_INTERVAL
 MINING_REWARD = settings.MINING_REWARD

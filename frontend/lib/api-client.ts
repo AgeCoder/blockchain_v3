@@ -14,23 +14,23 @@ export const apiClient = axios.create({
   timeout: 10000, // 10 seconds timeout
 })
 
-// Add request interceptor to attach wallet address or signed message for authentication
-apiClient.interceptors.request.use(
-  async (config) => {
-    if (typeof window !== "undefined" && config.url?.includes("/wallet")) {
-      const wallet = JSON.parse(localStorage.getItem("wallet") || "{}")
-      if (wallet.address) {
-        // Attach wallet address to headers for identification
-        config.headers["X-Wallet-Address"] = wallet.address
-      }
-    }
-    return config
-  },
-  (error) => {
-    console.error("Request error:", error)
-    return Promise.reject(error)
-  },
-)
+// // Add request interceptor to attach wallet address or signed message for authentication
+// apiClient.interceptors.request.use(
+//   async (config) => {
+//     if (typeof window !== "undefined" && config.url?.includes("/wallet")) {
+//       const wallet = JSON.parse(localStorage.getItem("wallet") || "{}")
+//       if (wallet.address) {
+//         // Attach wallet address to headers for identification
+//         config.headers["X-Wallet-Address"] = wallet.address
+//       }
+//     }
+//     return config
+//   },
+//   (error) => {
+//     console.error("Request error:", error)
+//     return Promise.reject(error)
+//   },
+// )
 
 // Add response interceptor to handle common errors
 apiClient.interceptors.response.use(
