@@ -4,11 +4,11 @@ from pydantic import Extra
 class Settings(BaseSettings):
     host: str = "127.0.0.1"
     peer: bool = os.environ.get("PEER", "false").lower() == "true"
-    boot_node: str = "wss://localhost:9000" 
-    # boot_node: str = "wss://boot-node.onrender.com" 
-    root_port: int = 5000
-    websocket_port: int = 5001
-    env: str = 'development'
+    # boot_node: str = "wss://localhost:10000" 
+    boot_node: str = "wss://boot-node.onrender.com" 
+    root_port: int = 3219
+    websocket_port: int = 3221
+    env: str = 'production'
     BLOCK_SUBSIDY: float = 50.0
     HALVING_INTERVAL: int = 210000
     MINING_REWARD: float = 50.0

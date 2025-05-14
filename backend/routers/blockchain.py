@@ -15,7 +15,7 @@ from math import ceil
 from core.config import BLOCK_SIZE_LIMIT, HALVING_INTERVAL, BLOCK_SUBSIDY, PRIORITY_MULTIPLIERS, BASE_TX_SIZE
 from pydantic import BaseModel
 import logging
-
+import asyncio
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
@@ -32,7 +32,8 @@ class FeeRateResponse(BaseModel):
     priority_multipliers: Dict[str, float]
     mempool_size: int
     block_fullness: float
-
+from concurrent.futures import ProcessPoolExecutor
+executor = ProcessPoolExecutor()
 @router.post("/mine", response_model=MineBlockResponse, status_code=200)
 async def route_mine(
     request: MineBlockRequest,
@@ -45,10 +46,12 @@ async def route_mine(
 
     if not request.miner_address:
         raise HTTPException(status_code=400, detail="Miner address is required")
-    
-    if (request.miner_address.startswith("0x") and len(request.miner_address) != 42) or (not request.miner_address.startswith("0x") and len(request.miner_address) != 40):
+
+    if (request.miner_address.startswith("0x") and len(request.miner_address) != 42) or \
+       (not request.miner_address.startswith("0x") and len(request.miner_address) != 40):
         raise HTTPException(status_code=400, detail="Invalid miner address format")
 
+    # Step 1: Filter and validate transactions (I/O or light CPU - keep async)
     valid_transactions = []
     total_fees = 0
     for tx in transaction_pool.get_priority_transactions():
@@ -60,31 +63,42 @@ async def route_mine(
             logger.warning(f"Transaction {tx.id} is invalid: {str(e)}")
             continue
 
-    # Create coinbase transaction
+    # Step 2: Create coinbase transaction
     try:
         coinbase_tx = Transaction.create_coinbase(
-            request.miner_address, 
-            blockchain.current_height + 1, 
+            request.miner_address,
+            blockchain.current_height + 1,
             total_fees
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Coinbase creation failed: {str(e)}")
 
-    # Mine block
+    # Step 3: Heavy mining in background thread (non-blocking)
     try:
-        new_block = blockchain.add_block([coinbase_tx] + valid_transactions,transaction_pool)
+        new_block = await asyncio.to_thread(
+            blockchain.add_block,
+            [coinbase_tx] + valid_transactions,
+            transaction_pool
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Mining failed: {str(e)}")
+
+    # Step 4: Continue lightweight I/O
+    try:
         pubsub.save_block_to_db(new_block)
         transaction_pool.clear_blockchain_transactions(blockchain)
         pubsub.broadcast_block_sync(new_block)
-        
-        return {
-            "message": "Block mined successfully",
-            "block": new_block.to_json(),
-            "reward": list(coinbase_tx.output.values())[0],
-            "confirmed_balance": blockchain.calculate_balance(request.miner_address)
-        }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Mining failed: {str(e)}")
+        logger.warning(f"Post-mine actions failed: {str(e)}")
+
+    # Step 5: Respond
+    return {
+        "message": "Block mined successfully",
+        "block": new_block.to_json(),
+        "reward": list(coinbase_tx.output.values())[0],
+        "confirmed_balance": blockchain.calculate_balance(request.miner_address)
+    }
+
 
 @router.get("/blockchain", response_model=BlockchainSchema, status_code=200)
 async def route_blockchain(blockchain: Blockchain = BlockchainDep):

@@ -12,8 +12,8 @@ from dependencies import app, get_blockchain, get_transaction_pool, get_pubsub,g
 from core.config import settings
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# logging.basicConfig(filename="app.log",level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
 from routers import blockchain, transaction, wallet, general
 
 app.include_router(blockchain.router)
@@ -40,7 +40,8 @@ app.add_middleware(
 
 async def run_fastapi_server(app: FastAPI, port: int):
     try:
-        config = Config(app=app, host="0.0.0.0", port=port, log_level="info")
+        config = Config(app=app, host="0.0.0.0", port=port, log_level="info",log_config=None)
+        # config = Config(app=app, host="0.0.0.0", port=port, log_level="info")
         server = Server(config)
         await server.serve()
     except Exception as e:
@@ -59,7 +60,7 @@ if __name__ == "__main__":
     
     os.environ['HOST'] = os.environ.get('HOST', get_public_ip())
     is_peer = settings.peer
-    port = settings.root_port if not is_peer else 4000
+    port = settings.root_port if not is_peer else 6784
 
     signal.signal(signal.SIGINT, handle_shutdown)
     signal.signal(signal.SIGTERM, handle_shutdown)

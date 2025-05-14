@@ -261,7 +261,6 @@ class Transaction:
                 raise ValueError("Invalid signature")
         except Exception as e:
             raise ValueError(f"Signature verification failed: {e}")
-        logging.info(f"Transaction {transaction.id} verified successfully")
         return True
 
     @staticmethod

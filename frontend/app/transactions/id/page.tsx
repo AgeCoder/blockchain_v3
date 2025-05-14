@@ -1,8 +1,8 @@
-// app/address/[address]/page.tsx
-'use client'
+// app/explore/transaction/page.tsx
+'use client';
 
 import React, { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
@@ -30,8 +30,10 @@ interface Transaction {
     blockHeight?: number;
 }
 
-export default function TransactionPage(params: Promise<{ id: string }>) {
+export default function TransactionPage() {
     const router = useRouter();
+    const searchParams = useSearchParams();
+    const txId = searchParams.get('id');
     const [transaction, setTransaction] = useState<Transaction | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -41,24 +43,23 @@ export default function TransactionPage(params: Promise<{ id: string }>) {
             try {
                 setLoading(true);
 
-                //@ts-ignore
-                const { id } = await params.params
-                console.log(id);
-                if (id) {
-                    const data = await api.transactions.getbyId(id);
-                    setTransaction(data);
+                if (!txId) {
+                    setError('Transaction ID parameter is missing');
+                    return;
                 }
+
+                const data = await api.transactions.getbyId(txId);
+                setTransaction(data);
             } catch (err) {
                 console.error('Error fetching transaction:', err);
                 setError('Failed to load transaction');
-                // router.replace('/not-found');
             } finally {
                 setLoading(false);
             }
         };
 
         fetchTransaction();
-    }, [router]);
+    }, [txId]);
 
     const formatTimestamp = (timestamp: number) => {
         return new Date(timestamp / 1000000).toLocaleString();
@@ -86,6 +87,14 @@ export default function TransactionPage(params: Promise<{ id: string }>) {
     if (error) {
         return (
             <div className="container mx-auto py-8">
+                <div className="mb-4">
+                    <Button asChild variant="ghost">
+                        <Link href="/explorer" className="flex items-center gap-2">
+                            <ArrowLeft className="h-4 w-4" />
+                            Back to Explorer
+                        </Link>
+                    </Button>
+                </div>
                 <Card className="text-destructive">
                     <CardHeader>
                         <CardTitle>Error</CardTitle>
@@ -138,7 +147,10 @@ export default function TransactionPage(params: Promise<{ id: string }>) {
                         {transaction.blockHeight && (
                             <div>
                                 <h3 className="text-sm font-medium text-muted-foreground">Block Height</h3>
-                                <Link href={`/block/${transaction.blockHeight}`} className="flex items-center gap-1 hover:underline">
+                                <Link
+                                    href={`/explore/block?height=${transaction.blockHeight}`}
+                                    className="flex items-center gap-1 hover:underline"
+                                >
                                     {transaction.blockHeight}
                                     <ExternalLink className="h-3 w-3" />
                                 </Link>
@@ -181,8 +193,6 @@ export default function TransactionPage(params: Promise<{ id: string }>) {
                                             ))}
                                         </div>
                                     </div>)}
-
-
                             </div>
                         </div>
 

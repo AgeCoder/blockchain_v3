@@ -1,10 +1,16 @@
-// app/block/[height]/page.tsx
-import React from 'react';
-import { notFound } from 'next/navigation';
+// app/explore/block/page.tsx
+'use client';
+
+import React, { useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
-import { api } from "@/lib/api-client"
+import { Button } from '@/components/ui/button';
+import Link from 'next/link';
+import { ArrowLeft, ExternalLink } from 'lucide-react';
+import { api } from "@/lib/api-client";
+import { Skeleton } from '@/components/ui/skeleton';
 
 interface BlockData {
     timestamp: number;
@@ -38,48 +44,114 @@ interface Transaction {
     is_coinbase: boolean;
 }
 
-async function getBlockByHeight(height: number): Promise<BlockData> {
-    try {
-        const response = await api.blockchain.getBlockByHeight(height)
-        return response;
-    } catch (error) {
-        console.error('Error fetching block:', error);
-        throw error;
-    }
-}
+export default function BlockPage() {
+    const router = useRouter();
+    const searchParams = useSearchParams();
+    const heightParam = searchParams.get('height');
+    const [block, setBlock] = useState<BlockData | null>(null);
+    const [currentHeight, setCurrentHeight] = useState<number>(0);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
 
-async function getCurrentHeight(): Promise<number> {
-    try {
-        const response = await api.blockchain.getHeight()
-        return response.data;
-    } catch (error) {
-        console.error('Error fetching current height:', error);
-        throw error;
-    }
-}
+    useEffect(() => {
+        const fetchData = async () => {
+            try {
+                setLoading(true);
 
-export default async function BlockPage({
-    params,
-}: {
-    params: Promise<{ height: string }>
-}) {
-    const { height } = await params
-    const currentHeight = await getCurrentHeight();
+                if (!heightParam) {
+                    setError('Block height parameter is missing');
+                    return;
+                }
 
-    const heighti = parseInt(height);
+                const height = parseInt(heightParam);
+                if (isNaN(height)) {
+                    setError('Invalid block height');
+                    return;
+                }
 
-    if (isNaN(heighti) || heighti < 0 || heighti > currentHeight) {
-        return notFound();
-    }
+                const [blockData, chainHeight] = await Promise.all([
+                    api.blockchain.getBlockByHeight(height),
+                    api.blockchain.getHeight()
+                ]);
 
-    const block = await getBlockByHeight(heighti);
+                setCurrentHeight(chainHeight.data);
+
+                if (height < 0 || height > chainHeight.data) {
+                    setError('Block height out of range');
+                    return;
+                }
+
+                setBlock(blockData);
+            } catch (err) {
+                console.error('Error fetching data:', err);
+                setError('Failed to load block data');
+            } finally {
+                setLoading(false);
+            }
+        };
+
+        fetchData();
+    }, [heightParam]);
 
     const formatTimestamp = (timestamp: number) => {
         return new Date(timestamp / 1000000).toLocaleString();
     };
 
+    if (loading) {
+        return (
+            <div className="container mx-auto py-8">
+                <div className="mb-4">
+                    <Button asChild variant="ghost">
+                        <Link href="/explorer" className="flex items-center gap-2">
+                            <ArrowLeft className="h-4 w-4" />
+                            Back to Explorer
+                        </Link>
+                    </Button>
+                </div>
+                <div className="space-y-4">
+                    <Skeleton className="h-32 w-full" />
+                    <Skeleton className="h-64 w-full" />
+                </div>
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <div className="container mx-auto py-8">
+                <div className="mb-4">
+                    <Button asChild variant="ghost">
+                        <Link href="/explorer" className="flex items-center gap-2">
+                            <ArrowLeft className="h-4 w-4" />
+                            Back to Explorer
+                        </Link>
+                    </Button>
+                </div>
+                <Card className="text-destructive">
+                    <CardHeader>
+                        <CardTitle>Error</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <p>{error}</p>
+                    </CardContent>
+                </Card>
+            </div>
+        );
+    }
+
+    if (!block) return null;
+
     return (
         <div className="container mx-auto py-8">
+            <div className="mb-4">
+                <Button asChild variant="ghost">
+                    <Link href="/explorer" className="flex items-center gap-2">
+                        <ArrowLeft className="h-4 w-4" />
+                        Back to Explorer
+                    </Link>
+                </Button>
+            </div>
+
             <Card className="mb-8">
                 <CardHeader>
                     <div className="flex items-center justify-between">

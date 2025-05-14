@@ -582,7 +582,7 @@ const DashboardPage = () => {
                   >
                     <Card
                       className="bg-background/50 backdrop-blur-sm hover:border-primary/50 transition-all cursor-pointer group"
-                      onClick={() => router.push(`/transactions/${tx.id}`)}
+                      onClick={() => router.push(`/transactions/id?id=${tx.id}`)}
                     >
                       <CardContent className="p-6">
                         <div className="flex items-center justify-between gap-4">

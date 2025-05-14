@@ -22,11 +22,7 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
-  experimental: {
-    webpackBuildWorker: true,
-    parallelServerBuildTraces: true,
-    parallelServerCompiles: true,
-  },
+  output: 'export',
 }
 
 if (userConfig) {

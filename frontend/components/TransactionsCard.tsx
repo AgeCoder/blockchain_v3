@@ -66,8 +66,8 @@ export default function TransactionsCard({ transactions, isLoadingTx }: any) {
                                                 className="flex items-center justify-between p-4 rounded-lg border hover:bg-muted/50 transition-colors"
                                                 role="article"
                                                 tabIndex={0}
-                                                onClick={() => router.push(`/transactions/${tx.id}`)}
-                                                onKeyDown={(e) => e.key === "Enter" && router.push(`/transactions/${tx.id}`)}
+                                                onClick={() => router.push(`/transactions/id?id=${tx.id}`)}
+                                                onKeyDown={(e) => e.key === "Enter" && router.push(`/transactions/id?id=${tx.id}`)}
                                             >
                                                 <div className="flex items-center gap-4">
                                                     <div
@@ -147,8 +147,8 @@ export default function TransactionsCard({ transactions, isLoadingTx }: any) {
                                                     className="flex items-center justify-between p-4 rounded-lg border hover:bg-muted/50 transition-colors"
                                                     role="article"
                                                     tabIndex={0}
-                                                    onClick={() => router.push(`/transactions/${tx.id}`)}
-                                                    onKeyDown={(e) => e.key === "Enter" && router.push(`/transactions/${tx.id}`)}
+                                                    onClick={() => router.push(`/transactions/id?id=${tx.id}`)}
+                                                    onKeyDown={(e) => e.key === "Enter" && router.push(`/transactions/id?id=${tx.id}`)}
                                                 >
                                                     <div className="flex items-center gap-4">
                                                         <div className="p-2 rounded-full bg-red-100 dark:bg-red-900 text-red-600 dark:text-red-400">
@@ -209,8 +209,8 @@ export default function TransactionsCard({ transactions, isLoadingTx }: any) {
                                                     className="flex items-center justify-between p-4 rounded-lg border hover:bg-muted/50 transition-colors"
                                                     role="article"
                                                     tabIndex={0}
-                                                    onClick={() => router.push(`/transactions/${tx.id}`)}
-                                                    onKeyDown={(e) => e.key === "Enter" && router.push(`/transactions/${tx.id}`)}
+                                                    onClick={() => router.push(`/transactions/id?id=${tx.id}`)}
+                                                    onKeyDown={(e) => e.key === "Enter" && router.push(`/transactions/id?id=${tx.id}`)}
                                                 >
                                                     <div className="flex items-center gap-4">
                                                         <div className="p-2 rounded-full bg-green-100 dark:bg-green-900 text-green-600 dark:text-green-400">
