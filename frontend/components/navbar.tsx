@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Home, Wallet, BarChart2, History, Settings, Menu, X, Sun, Moon, LogOut, ArrowRight, pickaxe } from "lucide-react"
+import { Home, Wallet, BarChart2, History, Settings, Menu, X, Sun, Moon, LogOut, ArrowRight, Pickaxe } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -24,7 +24,7 @@ const navItems = [
   { name: "Explorer", href: "/explorer", icon: BarChart2 },
   { name: "Transactions", href: "/transactions", icon: History },
   { name: "Settings", href: "/settings", icon: Settings },
-  { name: "Mine", href: "/Mine", icon: pickaxe },
+  { name: "Mine", href: "/Mine", icon: Pickaxe },
 
 ]
 

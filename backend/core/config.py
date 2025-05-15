@@ -4,7 +4,7 @@ from pydantic import Extra
 class Settings(BaseSettings):
     host: str = "127.0.0.1"
     peer: bool = os.environ.get("PEER", "false").lower() == "true"
-    # boot_node: str = "wss://localhost:10000" 
+    # boot_node: str = "ws://localhost:10000" 
     boot_node: str = "wss://boot-node.onrender.com" 
     root_port: int = 3219
     websocket_port: int = 3221

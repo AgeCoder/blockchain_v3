@@ -4,7 +4,6 @@ import json
 import logging
 import uuid
 import os
-import socket
 import time
 import duckdb
 import gzip
@@ -31,12 +30,20 @@ def get_public_ip():
         return "127.0.0.1"
 
 def open_port(port):
-    u = miniupnpc.UPnP()
-    u.discoverdelay = 200
-    u.discover()
-    u.selectigd()
-    u.addportmapping(port, 'TCP', u.lanaddr, port, 'WebSocket P2P', '')
-    logger.info(f"Opened port {port} via UPnP")
+    try:
+        u = miniupnpc.UPnP()
+        u.discoverdelay = 200
+        u.discover()
+        u.selectigd()
+        result = u.addportmapping(port, 'TCP', u.lanaddr, port, 'WebSocket P2P', '')
+        if result:
+            logger.info(f"Opened port {port} via UPnP for {u.lanaddr}")
+        else:
+            logger.error(f"UPnP port mapping failed for port {port}")
+            logger.info(f"Please manually forward port {port} on your router to {u.lanaddr}")
+    except Exception as e:
+        logger.error(f"UPnP failed for port {port}: {str(e)}")
+        logger.info(f"Please manually forward port {port} on your router")
 
 class PubSub:
     def __init__(self, blockchain, transaction_pool):
@@ -47,13 +54,12 @@ class PubSub:
         self.peer_nodes = {}  # uri -> websocket
         self.known_peers = set()
         self.peers_file = "peers.json"
-        self.peers = set()
         self.boot_node_uri = BOOT_NODE
-        self.max_retries = 2  # Changed from 3 to 2
+        self.max_retries = 2
         self.websocket_port = 3221 if os.environ.get('PEER') != 'True' else 3232
         self.public_ip = None
         self.public_port = None
-        self.my_uri = f"ws://127.0.0.1:{self.websocket_port}"  # Default URI
+        self.my_uri = f"ws://127.0.0.1:{self.websocket_port}"
         self.server = None
         self.loop = None
         self.processed_transactions = set()
@@ -85,19 +91,32 @@ class PubSub:
         self.MSG_RESPONSE_BLOCKS = "RESPONSE_BLOCKS"
         self.MSG_REQUEST_TX = "REQUEST_TX"
         self.MSG_RESPONSE_TX = "RESPONSE_TX"
-
     async def initialize_async(self):
-        """Async initialization for STUN and URI setup."""
         self.public_ip, self.public_port = await self.get_public_ip_port()
         if self.public_ip and self.public_port:
             self.my_uri = f"ws://{self.public_ip}:{self.public_port}"
             logger.info(f"Updated my_uri with STUN: {self.my_uri}")
         else:
-            logger.warning(f"STUN failed, using default my_uri: {self.my_uri}")
+            self.public_ip = get_public_ip()
+            self.public_port = self.websocket_port
+            self.my_uri = f"ws://{self.public_ip}:{self.public_port}"
+            logger.warning(f"STUN failed, using public IP from api.ipify.org: {self.my_uri}")
+            
+    async def turn_server(self):
+        self.public_ip, self.public_port = await self.get_public_ip_port()
+        if self.public_ip and self.public_port:
+            self.my_uri = f"ws://{self.public_ip}:{self.public_port}"
+            logger.info(f"Updated my_uri with STUN/TURN: {self.my_uri}")
+        else:
+            logger.warning(f"STUN/TURN failed, using default my_uri: {self.my_uri}")
 
     async def get_public_ip_port(self):
         try:
-            nat_type, ext_ip, ext_port = stun.get_ip_info(stun_host="stun.l.google.com", stun_port=19302, source_port=self.websocket_port)
+            nat_type, ext_ip, ext_port = stun.get_ip_info(
+                stun_host="stun.l.google.com",
+                stun_port=19302,
+                source_port=self.websocket_port
+            )
             logger.info(f"STUN: NAT Type: {nat_type}, Public IP: {ext_ip}, Public Port: {ext_port}")
             return ext_ip, ext_port
         except Exception as e:
@@ -105,7 +124,6 @@ class PubSub:
             return None, None
 
     def initialize_db(self):
-        """Initialize DuckDB table for blockchain storage."""
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS blocks (
                 index INTEGER,
@@ -125,7 +143,6 @@ class PubSub:
         self.save_block_to_db(Block.from_json(self.blockchain.chain[0].to_json()))
 
     def save_block_to_db(self, block):
-        """Save a block to DuckDB."""
         try:
             self.conn.execute("""
                 INSERT OR REPLACE INTO blocks (
@@ -150,7 +167,6 @@ class PubSub:
             logger.error(f"Error saving block to DuckDB: {e}")
 
     def load_blockchain_from_db(self):
-        """Load blockchain from DuckDB."""
         try:
             result = self.conn.execute("SELECT COUNT(*) FROM blocks").fetchone()
             if not result or result[0] == 0:
@@ -181,15 +197,12 @@ class PubSub:
             return [Block.from_json(self.blockchain.chain[0].to_json())]
 
     def compress_data(self, data):
-        """Compress data using gzip."""
         return gzip.compress(json.dumps(data).encode('utf-8'))
 
     def decompress_data(self, compressed_data):
-        """Decompress data using gzip."""
         return json.loads(gzip.decompress(compressed_data).decode('utf-8'))
 
     def update_peer_reliability(self, uri, success=True):
-        """Update peer reliability score."""
         if uri not in self.peer_reliability:
             self.peer_reliability[uri] = 0
         if not success:
@@ -200,7 +213,6 @@ class PubSub:
             self.peer_reliability[uri] = max(0, self.peer_reliability[uri] - 1)
 
     def adjust_chunk_size(self, success=True):
-        """Adjust chunk size based on sync success."""
         if success:
             self.chunk_size = min(self.max_chunk_size, self.chunk_size + self.chunk_size_increment)
             logger.debug(f"Increased chunk size to {self.chunk_size}")
@@ -209,32 +221,21 @@ class PubSub:
             logger.debug(f"Decreased chunk size to {self.chunk_size}")
 
     def create_message(self, msg_type, data):
-        """Create a JSON formatted message with compression."""
         message = {"type": msg_type, "data": data, "from": self.node_id}
-        if msg_type == "RELAY_MESSAGE":
-            # For RELAY_MESSAGE, encode data (bytes) as base64 string
-            if isinstance(data.get('data'), bytes):
-                message["data"]["data"] = base64.b64encode(data["data"]).decode('utf-8')
-        compressed_data = self.compress_data(message)
-        return compressed_data
+        return self.compress_data(message)
 
     def parse_message(self, message):
-        """Parse and decompress incoming message."""
         try:
             if isinstance(message, bytes):
                 msg = self.decompress_data(message)
             else:
                 msg = json.loads(message)
-            # Handle RELAY_MESSAGE with base64-encoded data
-            if msg.get('type') == "RELAY_MESSAGE" and isinstance(msg.get('data', {}).get('data'), str):
-                msg['data']['data'] = base64.b64decode(msg['data']['data'])
             return msg
         except Exception as e:
             logger.error(f"Error parsing message: {e}")
             raise json.JSONDecodeError("Invalid message", str(message), 0)
 
     def save_peers(self):
-        """Save the list of known peers to a file."""
         try:
             with open(self.peers_file, "w") as f:
                 json.dump(list(self.known_peers), f)
@@ -242,19 +243,20 @@ class PubSub:
             logger.error(f"Error saving peers: {e}")
 
     def load_peers(self):
-        """Load the list of known peers from a file."""
         try:
-            if os.path.exists(self.peers_file):
+            if os.path.exists(self.peers_file) and os.path.getsize(self.peers_file) > 0:
                 with open(self.peers_file, "r") as f:
                     peers = json.load(f)
-                    return set(peers)
+                    return set(peers) if isinstance(peers, list) else set()
+            return set()
+        except json.JSONDecodeError:
+            logger.error(f"Invalid JSON in {self.peers_file}")
             return set()
         except Exception as e:
             logger.error(f"Error loading peers: {e}")
             return set()
 
     async def fetch_blocks_from_peer(self, uri, start_height, end_height):
-        """Fetch a chunk of blocks from a peer."""
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(f"{uri}/request_blocks", json={"start_height": start_height, "end_height": end_height}) as response:
@@ -276,7 +278,6 @@ class PubSub:
             return []
 
     async def sync_with_peers(self):
-        """Synchronize blockchain with peers, fetching chunks in parallel."""
         local_chain = self.load_blockchain_from_db()
         try:
             self.blockchain.replace_chain(local_chain)
@@ -301,7 +302,6 @@ class PubSub:
             logger.info("No peers have a longer or equal chain")
             return
 
-        print(len(chains))
         if len(chains) == 1:
             selected_peer = list(chains.keys())[0]
             if selected_peer == self.my_uri:
@@ -367,7 +367,6 @@ class PubSub:
             logger.warning("No missing blocks received from peer")
 
     async def request_chain_length(self, uri):
-        """Request chain length from a peer."""
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(f"{uri}/chain_length") as response:
@@ -378,13 +377,11 @@ class PubSub:
             return 0
 
     async def handle_message(self, message, websocket):
-        """Handle incoming messages based on their type."""
         try:
             msg = self.parse_message(message)
             msg_type = msg['type']
             logger.info(f"Received message type: {msg_type}")
             from_id = msg.get('from', 'unknown')
-            logger.debug(f"Received message of type {msg_type} from {from_id}")
             data = msg['data']
             peer_uri = f"ws://{websocket.remote_address[0]}:{websocket.remote_address[1]}"
 
@@ -420,14 +417,12 @@ class PubSub:
                 except Exception as e:
                     logger.error(f"Failed to replace chain: {e}")
 
-            if msg_type == self.MSG_NEW_TX:
+            elif msg_type == self.MSG_NEW_TX:
                 transaction = Transaction.from_json(data)
                 tx_id = transaction.id
                 tx_time = transaction.input.get('timestamp', 0)
-                logger.debug(f"Transaction ID: {tx_id}, Timestamp: {tx_time}")
                 existing_tx = self.transaction_pool.transaction_map.get(tx_id)
                 if existing_tx:
-                    logger.debug(f"Existing transaction found: {existing_tx.input['timestamp']}")
                     if tx_time > existing_tx.input['timestamp']:
                         try:
                             Transaction.is_valid(transaction)
@@ -451,6 +446,7 @@ class PubSub:
                             self.last_tx_pool_request = time.time()
                     except Exception as e:
                         logger.error(f"Failed to add transaction {tx_id}: {e}")
+
             elif msg_type == self.MSG_REQUEST_CHAIN:
                 chain_data = [block.to_json() for block in self.blockchain.chain]
                 await websocket.send(self.create_message(self.MSG_RESPONSE_CHAIN, chain_data))
@@ -504,7 +500,7 @@ class PubSub:
                             added_count += 1
                     except Exception as e:
                         logger.error(f"Failed to add or update transaction from peer: {e}")
-                logger.info(f"Successfully added or updated {added_count} transactions to pool from peer")
+                logger.info(f"Added/updated {added_count} transactions to pool")
                 if added_count == 0:
                     self.tx_pool_syncing = False
                 elif time.time() - self.last_tx_pool_request > self.tx_pool_request_cooldown:
@@ -530,7 +526,6 @@ class PubSub:
 
             elif msg_type == self.MSG_REQUEST_BLOCKS:
                 start_height = data
-                print(len(self.peer_nodes))
                 if len(self.peer_nodes) == 1:
                     logger.info(f"Sending full blockchain to peer {websocket.remote_address}")
                     blocks_to_send = self.blockchain.chain[1:]
@@ -538,7 +533,6 @@ class PubSub:
                     end_height = min(start_height + self.chunk_size, len(self.blockchain.chain))
                     blocks_to_send = self.blockchain.chain[start_height:end_height]
                     logger.debug(f"Sending blocks {start_height} to {end_height-1} to peer {websocket.remote_address}")
-                
                 blocks_data = [block.to_json() for block in blocks_to_send]
                 await websocket.send(self.create_message(self.MSG_RESPONSE_BLOCKS, blocks_data))
 
@@ -585,7 +579,7 @@ class PubSub:
                     self.update_peer_reliability(peer_uri, success=False)
                     self.adjust_chunk_size(success=False)
                 self.syncing_chain = False
-                
+
             elif msg_type == self.MSG_REQUEST_TX:
                 tx_id = data
                 tx = self.transaction_pool.transaction_map.get(tx_id)
@@ -612,8 +606,7 @@ class PubSub:
             logger.error(f"Error handling message: {e}")
 
     async def broadcast(self, message, exclude=None):
-        """Broadcast a message to all connected peers."""
-        logger.info(f"Broadcasting message to {len(self.peer_nodes)} peers: {list(self.peer_nodes.keys())}")
+        logger.info(f"Broadcasting to {len(self.peer_nodes)} peers: {list(self.peer_nodes.keys())}")
         failed_peers = []
         for uri, peer in list(self.peer_nodes.items()):
             if peer != exclude:
@@ -625,19 +618,26 @@ class PubSub:
                     logger.warning(f"Connection closed by peer {uri}, removing")
                     failed_peers.append(uri)
                 except Exception as e:
-                    logger.error(f"Failed to send message to {uri}: {e}, attempting relay")
+                    logger.error(f"Failed to send to {uri}: {e}, attempting relay")
                     try:
-                        async with websockets.connect(self.boot_node_uri) as ws:
-                            relay_msg = self.create_message("RELAY_MESSAGE", {"target_uri": uri, "data": message})
-                            await ws.send(relay_msg)
+                        async with websockets.connect(self.boot_node_uri, max_size=1024*1024) as ws:
+                            relay_msg = {
+                                "type": "RELAY_MESSAGE",
+                                "data": {"target_uri": uri, "data": base64.b64encode(message).decode('utf-8')},
+                                "from": self.node_id
+                            }
+                            await ws.send(self.compress_data(relay_msg))
                             logger.info(f"Relayed message to {uri} via boot node")
-                            self.peer_nodes[uri] = ws  # Use relay connection
+                            self.peer_nodes[uri] = ws
                             self.update_peer_reliability(uri, success=True)
-                        # Send transaction/blockchain sync requests after relay
-                        if not self.tx_pool_syncing and time.time() - self.last_tx_pool_request > self.tx_pool_request_cooldown:
-                            self.tx_pool_syncing = True
-                            await self.broadcast(self.create_message(self.MSG_REQUEST_TX_POOL, None))
-                            self.last_tx_pool_request = time.time()
+                            # Trigger sync tasks as in direct P2P
+                            await ws.send(self.create_message(self.MSG_REQUEST_CHAIN_LENGTH, None))
+                            if not self.tx_pool_syncing and time.time() - self.last_tx_pool_request > self.tx_pool_request_cooldown:
+                                self.tx_pool_syncing = True
+                                await ws.send(self.create_message(self.MSG_REQUEST_TX_POOL, None))
+                                self.last_tx_pool_request = time.time()
+                            async for response in ws:
+                                await self.handle_message(response, ws)
                     except Exception as e:
                         logger.error(f"Relay to {uri} failed: {e}")
                         failed_peers.append(uri)
@@ -650,7 +650,6 @@ class PubSub:
             self.last_tx_pool_request = time.time()
 
     async def remove_peer(self, uri):
-        """Remove a peer from the connected peers list."""
         if uri in self.peer_nodes:
             try:
                 await self.peer_nodes[uri].close()
@@ -662,7 +661,6 @@ class PubSub:
             logger.info(f"Peer {uri} removed from known peers")
 
     async def connection_handler(self, websocket):
-        """Handle new WebSocket connections."""
         try:
             peer_uri = f"ws://{websocket.remote_address[0]}:{websocket.remote_address[1]}"
             self.peer_nodes[peer_uri] = websocket
@@ -682,30 +680,36 @@ class PubSub:
             await self.remove_peer(peer_uri)
 
     async def connect_to_peer(self, uri, retries=0):
-        """Connect to a peer node with relay fallback."""
         if uri == self.my_uri or uri in self.peer_nodes or retries >= self.max_retries or not uri.startswith('ws://'):
             if uri == self.my_uri:
                 logger.info(f"Skipping connection to self: {uri}")
-            if retries >= self.max_retries:
+            elif retries >= self.max_retries:
                 logger.info(f"Max retries reached for peer {uri}, switching to relay")
                 try:
-                    async with websockets.connect(self.boot_node_uri) as ws:
-                        relay_msg = self.create_message("RELAY_MESSAGE", {"target_uri": uri, "data": self.create_message(self.MSG_REQUEST_CHAIN_LENGTH, None)})
-                        await ws.send(relay_msg)
-                        response = await ws.recv()
-                        logger.debug(f"Received relay response for {uri}: {response}")
+                    ws = await websockets.connect(self.boot_node_uri, max_size=1024*1024, ping_interval=30, ping_timeout=60)
+                    self.peer_nodes[uri] = ws
+                    relay_msg = {
+                        "type": "RELAY_MESSAGE",
+                        "data": {"target_uri": uri, "data": base64.b64encode(self.create_message(self.MSG_REQUEST_CHAIN_LENGTH, None)).decode('utf-8')},
+                        "from": self.node_id
+                    }
+                    await ws.send(self.compress_data(relay_msg))
+                    logger.info(f"Relayed MSG_REQUEST_CHAIN_LENGTH to {uri} via boot node")
+                    if not self.tx_pool_syncing and time.time() - self.last_tx_pool_request > self.tx_pool_request_cooldown:
+                        self.tx_pool_syncing = True
+                        relay_tx_pool_msg = {
+                            "type": "RELAY_MESSAGE",
+                            "data": {"target_uri": uri, "data": base64.b64encode(self.create_message(self.MSG_REQUEST_TX_POOL, None)).decode('utf-8')},
+                            "from": self.node_id
+                        }
+                        await ws.send(self.compress_data(relay_tx_pool_msg))
+                        self.last_tx_pool_request = time.time()
+                    async for response in ws:
                         await self.handle_message(response, ws)
-                        self.peer_nodes[uri] = ws  # Store relay connection to avoid retrying direct P2P
-                        # Send transaction/blockchain sync requests
-                        if not self.tx_pool_syncing and time.time() - self.last_tx_pool_request > self.tx_pool_request_cooldown:
-                            self.tx_pool_syncing = True
-                            await self.broadcast(self.create_message(self.MSG_REQUEST_TX_POOL, None))
-                            self.last_tx_pool_request = time.time()
-                    logger.info(f"Using boot node relay for {uri}")
                 except Exception as e:
                     logger.error(f"Relay to {uri} failed: {e}")
                     await self.remove_peer(uri)
-            if not uri.startswith('ws://'):
+            elif not uri.startswith('ws://'):
                 logger.warning(f"Invalid peer URI: {uri}")
             return
 
@@ -718,52 +722,26 @@ class PubSub:
             logger.debug(f"Using localhost for local peer: {parsed_uri}")
 
         try:
-            logger.info(f"Attempting to connect to peer {uri} via {parsed_uri} (retry {retries + 1}/{self.max_retries})")
+            logger.info(f"Connecting to peer {uri} via {parsed_uri} (retry {retries + 1}/{self.max_retries})")
             async with websockets.connect(parsed_uri, ping_interval=30, ping_timeout=60, max_size=1024*1024) as websocket:
                 self.peer_nodes[uri] = websocket
-                logger.info(f"Successfully connected to peer {uri} via {parsed_uri}")
-                try:
-                    logger.debug(f"Sending MSG_REQUEST_CHAIN_LENGTH to {uri}")
-                    await websocket.send(self.create_message(self.MSG_REQUEST_CHAIN_LENGTH, None))
-                    if not self.tx_pool_syncing and time.time() - self.last_tx_pool_request > self.tx_pool_request_cooldown:
-                        logger.debug(f"Sending MSG_REQUEST_TX_POOL to {uri}")
-                        self.tx_pool_syncing = True
-                        await websocket.send(self.create_message(self.MSG_REQUEST_TX_POOL, None))
-                        self.last_tx_pool_request = time.time()
-                except Exception as e:
-                    logger.error(f"Failed to send requests to {uri}: {e}")
-                    await self.remove_peer(uri)
-                    return
+                logger.info(f"Connected to peer {uri} via {parsed_uri}")
+                await websocket.send(self.create_message(self.MSG_REQUEST_CHAIN_LENGTH, None))
+                if not self.tx_pool_syncing and time.time() - self.last_tx_pool_request > self.tx_pool_request_cooldown:
+                    self.tx_pool_syncing = True
+                    await websocket.send(self.create_message(self.MSG_REQUEST_TX_POOL, None))
+                    self.last_tx_pool_request = time.time()
                 async for message in websocket:
-                    logger.debug(f"Received message from peer {uri}")
                     await self.handle_message(message, websocket)
         except Exception as e:
             logger.error(f"Failed to connect to peer {uri} via {parsed_uri}: {e}")
             if retries + 1 < self.max_retries:
-                await asyncio.sleep(2)  # Short delay before retry
+                await asyncio.sleep(2 * (2 ** retries))
                 await self.connect_to_peer(uri, retries + 1)
             else:
-                logger.info(f"Max retries reached for peer {uri}, switching to relay")
-                try:
-                    async with websockets.connect(self.boot_node_uri) as ws:
-                        relay_msg = self.create_message("RELAY_MESSAGE", {"target_uri": uri, "data": self.create_message(self.MSG_REQUEST_CHAIN_LENGTH, None)})
-                        await ws.send(relay_msg)
-                        response = await ws.recv()
-                        logger.debug(f"Received relay response for {uri}: {response}")
-                        await self.handle_message(response, ws)
-                        self.peer_nodes[uri] = ws  # Store relay connection to avoid retrying direct P2P
-                        # Send transaction/blockchain sync requests
-                        if not self.tx_pool_syncing and time.time() - self.last_tx_pool_request > self.tx_pool_request_cooldown:
-                            self.tx_pool_syncing = True
-                            await self.broadcast(self.create_message(self.MSG_REQUEST_TX_POOL, None))
-                            self.last_tx_pool_request = time.time()
-                    logger.info(f"Using boot node relay for {uri}")
-                except Exception as e:
-                    logger.error(f"Relay to {uri} failed: {e}")
-                    await self.remove_peer(uri)
+                await self.connect_to_peer(uri, retries=self.max_retries)  # Trigger relay
 
     async def register_with_boot_node(self, uri, my_uri, retries=0):
-        """Register with the boot node using STUN-derived public IP/port."""
         if retries >= self.max_retries:
             logger.error(f"Max retries reached for boot node {uri}. Unable to register.")
             return
@@ -771,37 +749,24 @@ class PubSub:
             public_ip, public_port = await self.get_public_ip_port()
             if public_ip and public_port:
                 my_uri = f"ws://{public_ip}:{public_port}"
-                logger.info(f"Updated my_uri with STUN: {my_uri}")
+                logger.info(f"Updated my_uri with STUN/TURN: {my_uri}")
             else:
                 logger.warning(f"Using original my_uri: {my_uri}")
 
-            logger.info(f"Attempting to connect to boot node {uri} (retry {retries + 1}/{self.max_retries})")
+            logger.info(f"Connecting to boot node {uri} (retry {retries + 1}/{self.max_retries})")
             async with websockets.connect(uri, ping_interval=30, ping_timeout=60, max_size=1024*1024) as websocket:
-                logger.info(f"Successfully connected to boot node {uri}")
-                logger.debug(f"Sending REGISTER_PEER message with URI {my_uri} to boot node")
+                logger.info(f"Connected to boot node {uri}")
                 await websocket.send(self.create_message(self.MSG_REGISTER_PEER, my_uri))
                 async for message in websocket:
-                    logger.debug(f"Received message from boot node {uri}")
                     msg = self.parse_message(message)
                     if msg['type'] == self.MSG_PEER_LIST:
                         peers = msg['data'] if msg.get('data') else []
-                        if not peers:
-                            logger.warning(f"Received empty peer list from boot node")
-                        else:
-                            logger.info(f"Received peer list from boot node: {peers}")
+                        logger.info(f"Received peer list from boot node: {peers}")
                         valid_peers = [p for p in peers if p.startswith('ws://') and p != my_uri]
                         self.known_peers.update(valid_peers)
                         self.save_peers()
                         for peer_uri in valid_peers:
                             asyncio.create_task(self.connect_to_peer(peer_uri))
-        except websockets.exceptions.ConnectionClosedError as e:
-            logger.warning(f"Connection closed by boot node {uri}: {e}")
-            await asyncio.sleep(5 * (2 ** retries))
-            await self.register_with_boot_node(uri, my_uri, retries + 1)
-        except websockets.exceptions.InvalidStatusCode as e:
-            logger.error(f"Invalid status code from boot node {uri}: {e}")
-            await asyncio.sleep(5 * (2 ** retries))
-            await self.register_with_boot_node(uri, my_uri, retries + 1)
         except Exception as e:
             logger.error(f"Failed to connect to boot node {uri}: {e}")
             await asyncio.sleep(5 * (2 ** retries))
@@ -813,18 +778,16 @@ class PubSub:
         except Exception as e:
             logger.error(f"Failed to open port {self.websocket_port} via UPnP: {e}. Please forward manually.")
         await self.initialize_async()
-        self.server = await websockets.serve(self.connection_handler, "0.0.0.0", self.websocket_port)
+        self.server = await websockets.serve(self.connection_handler, "0.0.0.0", self.websocket_port, max_size=1024*1024)
         logger.info(f"Peer node running at {self.my_uri}")
         await self.sync_with_peers()
         return self.server
 
     async def broadcast_transaction(self, transaction):
-        """Broadcast a transaction to all peers."""
         message = self.create_message(self.MSG_NEW_TX, transaction.to_json())
         await self.broadcast(message)
 
     def broadcast_transaction_sync(self, transaction):
-        """Broadcast a transaction to all peers synchronously."""
         if self.loop:
             future = asyncio.run_coroutine_threadsafe(self.broadcast_transaction(transaction), self.loop)
             future.result()
@@ -833,12 +796,10 @@ class PubSub:
             logger.error("Event loop not available for broadcasting")
 
     async def broadcast_block(self, block):
-        """Broadcast a block to all peers."""
         message = self.create_message(self.MSG_NEW_BLOCK, block.to_json())
         await self.broadcast(message)
 
     def broadcast_block_sync(self, block):
-        """Broadcast a block to all peers synchronously."""
         if self.loop:
             future = asyncio.run_coroutine_threadsafe(self.broadcast_block(block), self.loop)
             future.result()
@@ -847,7 +808,6 @@ class PubSub:
             logger.error("Event loop not available for broadcasting")
 
     async def run_peer_discovery(self):
-        """Run peer discovery logic."""
         logger.info("Starting peer discovery...")
         if self.my_uri != self.boot_node_uri:
             asyncio.create_task(self.register_with_boot_node(self.boot_node_uri, self.my_uri))
@@ -857,7 +817,6 @@ class PubSub:
                 asyncio.create_task(self.connect_to_peer(peer_uri))
 
     def start_websocket_server(self):
-        """Start the WebSocket server and peer discovery."""
         async def run_node():
             await self.start_server()
             await self.run_peer_discovery()

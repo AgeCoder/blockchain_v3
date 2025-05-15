@@ -28,16 +28,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# def get_public_ip():
-#     try:
-#         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-#         s.connect(("8.8.8.8", 80))
-#         ip = s.getsockname()[0]
-#         s.close()
-#         return ip
-#     except Exception:
-#         return "127.0.0.1"
-
 async def run_fastapi_server(app: FastAPI, port: int):
     try:
         config = Config(app=app, host="0.0.0.0", port=port, log_level="info",log_config=None)
