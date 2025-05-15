@@ -25,6 +25,7 @@ export default function BackendCheckWrapper({
             if (response.ok) {
                 const data = await response.json();
                 if (data.status === "healthy") {
+
                     setIsBackendReady(true);
                     setError(null);
                     return true;
@@ -65,6 +66,7 @@ export default function BackendCheckWrapper({
         // Cleanup
         return () => {
             isMounted.current = false;
+
             if (timeoutRef.current) {
                 clearTimeout(timeoutRef.current);
             }

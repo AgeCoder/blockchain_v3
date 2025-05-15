@@ -2,7 +2,7 @@ import axios from "axios"
 import { toast } from "@/components/ui/use-toast"
 
 // Base URL for the API - use environment variable in production
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:5000"
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3219"
 
 // Create axios instance with proper configuration
 export const apiClient = axios.create({

@@ -4,7 +4,7 @@ use std::process::Command;
 
 fn main() {
     // Start the FastAPI backend in background
-    Command::new("./backend.exe")
+    Command::new("./server.exe")
         .spawn()
         .expect("failed to start backend");
 

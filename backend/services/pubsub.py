@@ -52,6 +52,7 @@ class PubSub:
         self.transaction_pool = transaction_pool
         self.node_id = str(uuid.uuid4())
         self.peer_nodes = {}  # uri -> websocket
+        self.relay_peers = {}  # uri -> boot_node_websocket for relay mode
         self.known_peers = set()
         self.peers_file = "peers.json"
         self.boot_node_uri = BOOT_NODE
@@ -91,6 +92,8 @@ class PubSub:
         self.MSG_RESPONSE_BLOCKS = "RESPONSE_BLOCKS"
         self.MSG_REQUEST_TX = "REQUEST_TX"
         self.MSG_RESPONSE_TX = "RESPONSE_TX"
+        self.MSG_RELAY_FAILURE = "RELAY_FAILURE"
+        
     async def initialize_async(self):
         self.public_ip, self.public_port = await self.get_public_ip_port()
         if self.public_ip and self.public_port:
@@ -606,8 +609,11 @@ class PubSub:
             logger.error(f"Error handling message: {e}")
 
     async def broadcast(self, message, exclude=None):
-        logger.info(f"Broadcasting to {len(self.peer_nodes)} peers: {list(self.peer_nodes.keys())}")
+        logger.info(f"Broadcasting to {len(self.peer_nodes)} direct peers and {len(self.relay_peers)} relay peers")
         failed_peers = []
+        relay_needed = []
+
+        # Try direct communication
         for uri, peer in list(self.peer_nodes.items()):
             if peer != exclude:
                 try:
@@ -615,39 +621,128 @@ class PubSub:
                     logger.debug(f"Sent message to peer {uri}")
                     self.update_peer_reliability(uri, success=True)
                 except ConnectionClosedError:
-                    logger.warning(f"Connection closed by peer {uri}, removing")
-                    failed_peers.append(uri)
+                    logger.warning(f"Connection closed by peer {uri}, marking for relay")
+                    relay_needed.append(uri)
                 except Exception as e:
-                    logger.error(f"Failed to send to {uri}: {e}, attempting relay")
-                    try:
-                        async with websockets.connect(self.boot_node_uri, max_size=1024*1024) as ws:
-                            relay_msg = {
-                                "type": "RELAY_MESSAGE",
-                                "data": {"target_uri": uri, "data": base64.b64encode(message).decode('utf-8')},
-                                "from": self.node_id
-                            }
-                            await ws.send(self.compress_data(relay_msg))
-                            logger.info(f"Relayed message to {uri} via boot node")
-                            self.peer_nodes[uri] = ws
-                            self.update_peer_reliability(uri, success=True)
-                            # Trigger sync tasks as in direct P2P
-                            await ws.send(self.create_message(self.MSG_REQUEST_CHAIN_LENGTH, None))
-                            if not self.tx_pool_syncing and time.time() - self.last_tx_pool_request > self.tx_pool_request_cooldown:
-                                self.tx_pool_syncing = True
-                                await ws.send(self.create_message(self.MSG_REQUEST_TX_POOL, None))
-                                self.last_tx_pool_request = time.time()
-                            async for response in ws:
-                                await self.handle_message(response, ws)
-                    except Exception as e:
-                        logger.error(f"Relay to {uri} failed: {e}")
-                        failed_peers.append(uri)
-                        self.update_peer_reliability(uri, success=False)
+                    logger.error(f"Failed to send to {uri}: {e}, will try relay")
+                    relay_needed.append(uri)
+
+        # Handle relay peers
+        for uri in list(self.relay_peers.keys()) + relay_needed:
+            if uri != self.my_uri and (exclude is None or uri != exclude.remote_address[1]):
+                if await self.relay_message(uri, message):
+                    logger.debug(f"Successfully relayed message to {uri}")
+                    self.update_peer_reliability(uri, success=True)
+                else:
+                    logger.error(f"Failed to relay message to {uri}")
+                    failed_peers.append(uri)
+                    self.update_peer_reliability(uri, success=False)
+
+        # Clean up failed peers
         for uri in failed_peers:
             await self.remove_peer(uri)
-        if not self.peer_nodes and not self.tx_pool_syncing and time.time() - self.last_tx_pool_request > self.tx_pool_request_cooldown:
+
+        # Request TX pool sync if needed
+        if not self.peer_nodes and not self.relay_peers and \
+        not self.tx_pool_syncing and \
+        time.time() - self.last_tx_pool_request > self.tx_pool_request_cooldown:
             self.tx_pool_syncing = True
             asyncio.create_task(self.broadcast(self.create_message(self.MSG_REQUEST_TX_POOL, None)))
             self.last_tx_pool_request = time.time()
+
+    async def handle_relay_responses(self, boot_ws, target_uri):
+        """Handle responses from the boot node for relayed messages."""
+        print('hiiiiiiiiiiiiiiiiiiiiiiiii')
+        try:
+            async for response in boot_ws:
+                try:
+                    # Ensure message is decompressed if necessary
+                    if isinstance(response, bytes):
+                        msg = self.decompress_data(response)
+                    else:
+                        msg = json.loads(response)
+                    msg_type = msg.get('type')
+                    logger.info(f"Received relayed message from boot node for {target_uri}: {msg_type}")
+
+                    if msg_type == self.MSG_RELAY_FAILURE:
+                        failure_data = msg.get('data', {})
+                        failed_uri = failure_data.get('target_uri')
+                        reason = failure_data.get('reason', 'unknown')
+                        if failed_uri == target_uri:
+                            logger.warning(f"Relay failure for {failed_uri}: {reason}")
+                            self.update_peer_reliability(failed_uri, success=False)
+                            await self.remove_peer(failed_uri)
+                            if failed_uri in self.relay_peers:
+                                try:
+                                    await self.relay_peers[failed_uri].close()
+                                except:
+                                    pass
+                                del self.relay_peers[failed_uri]
+                            return
+
+                    # Process regular messages
+                    ws_wrapper = type('obj', (object,), {
+                        'remote_address': (target_uri.split(':')[1].replace('//', ''), int(target_uri.split(':')[-1])),
+                        'send': lambda data: self.relay_message(target_uri, data),
+                        'close': lambda: None
+                    })
+                    # Pass the raw response to handle_message to ensure proper parsing
+                    await self.handle_message(self.compress_data(msg) if isinstance(response, bytes) else response, ws_wrapper)
+
+                except json.JSONDecodeError as e:
+                    logger.error(f"Invalid JSON response from boot node for {target_uri}: {e}")
+                except Exception as e:
+                    logger.error(f"Error handling relay response for {target_uri}: {e}")
+                    self.update_peer_reliability(target_uri, success=False)
+
+        except websockets.exceptions.ConnectionClosed as e:
+            logger.warning(f"Boot node connection closed for relay to {target_uri}: {e}")
+            # Attempt to reconnect
+            if target_uri in self.relay_peers:
+                del self.relay_peers[target_uri]
+            await self.ensure_relay_connection(target_uri)
+        except Exception as e:
+            logger.error(f"Unexpected error in relay handler for {target_uri}: {e}")
+        finally:
+            if target_uri in self.relay_peers and not self.relay_peers[target_uri].closed:
+                try:
+                    await self.relay_peers[target_uri].close()
+                except:
+                    pass
+                del self.relay_peers[target_uri]
+                logger.info(f"Closed relay connection for {target_uri}")
+
+    async def relay_message(self, target_uri, message):
+        """Send a message via relay through the boot node."""
+        if not await self.ensure_relay_connection(target_uri):
+            logger.error(f"Cannot relay message to {target_uri}: no relay connection")
+            return False
+
+        boot_ws = self.relay_peers[target_uri]
+        try:
+            # Create relay message with base64 encoded payload
+            relay_msg = {
+                "type": "RELAY_MESSAGE",
+                "data": {
+                    "target_uri": target_uri,
+                    "data": base64.b64encode(message).decode('utf-8')
+                },
+                "from": self.my_uri  # Use my_uri instead of node_id for consistency
+            }
+
+            # Send relay request to boot node
+            await boot_ws.send(self.compress_data(relay_msg))
+            logger.info(f"Relayed message to {target_uri} via boot node")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to relay message to {target_uri}: {e}")
+            try:
+                await boot_ws.close()
+            except:
+                pass
+            if target_uri in self.relay_peers:
+                del self.relay_peers[target_uri]
+            return False
 
     async def remove_peer(self, uri):
         if uri in self.peer_nodes:
@@ -680,47 +775,24 @@ class PubSub:
             await self.remove_peer(peer_uri)
 
     async def connect_to_peer(self, uri, retries=0):
-        if uri == self.my_uri or uri in self.peer_nodes or retries >= self.max_retries or not uri.startswith('ws://'):
+        if uri == self.my_uri or uri in self.peer_nodes or retries >= self.max_retries -1:
             if uri == self.my_uri:
                 logger.info(f"Skipping connection to self: {uri}")
-            elif retries >= self.max_retries:
-                logger.info(f"Max retries reached for peer {uri}, switching to relay")
-                try:
-                    ws = await websockets.connect(self.boot_node_uri, max_size=1024*1024, ping_interval=30, ping_timeout=60)
-                    self.peer_nodes[uri] = ws
-                    relay_msg = {
-                        "type": "RELAY_MESSAGE",
-                        "data": {"target_uri": uri, "data": base64.b64encode(self.create_message(self.MSG_REQUEST_CHAIN_LENGTH, None)).decode('utf-8')},
-                        "from": self.node_id
-                    }
-                    await ws.send(self.compress_data(relay_msg))
-                    logger.info(f"Relayed MSG_REQUEST_CHAIN_LENGTH to {uri} via boot node")
+                return
+            if retries >= self.max_retries:
+                logger.info(f"Max retries reached for peer {uri}, switching to relay mode")
+                if await self.ensure_relay_connection(uri):
+                    # Send initial messages via relay
+                    await self.relay_message(uri, self.create_message(self.MSG_REQUEST_CHAIN_LENGTH, None))
                     if not self.tx_pool_syncing and time.time() - self.last_tx_pool_request > self.tx_pool_request_cooldown:
                         self.tx_pool_syncing = True
-                        relay_tx_pool_msg = {
-                            "type": "RELAY_MESSAGE",
-                            "data": {"target_uri": uri, "data": base64.b64encode(self.create_message(self.MSG_REQUEST_TX_POOL, None)).decode('utf-8')},
-                            "from": self.node_id
-                        }
-                        await ws.send(self.compress_data(relay_tx_pool_msg))
+                        await self.relay_message(uri, self.create_message(self.MSG_REQUEST_TX_POOL, None))
                         self.last_tx_pool_request = time.time()
-                    async for response in ws:
-                        await self.handle_message(response, ws)
-                except Exception as e:
-                    logger.error(f"Relay to {uri} failed: {e}")
-                    await self.remove_peer(uri)
-            elif not uri.startswith('ws://'):
-                logger.warning(f"Invalid peer URI: {uri}")
-            return
+                    # Schedule chain sync retry if needed
+                    # asyncio.create_task(self.retry_chain_sync(uri))
+                return
 
         parsed_uri = uri
-        my_ip = self.my_uri.split(':')[1].replace('//', '')
-        peer_ip = uri.split(':')[1].replace('//', '')
-        if peer_ip == my_ip:
-            port = uri.split(':')[-1]
-            parsed_uri = f"ws://localhost:{port}"
-            logger.debug(f"Using localhost for local peer: {parsed_uri}")
-
         try:
             logger.info(f"Connecting to peer {uri} via {parsed_uri} (retry {retries + 1}/{self.max_retries})")
             async with websockets.connect(parsed_uri, ping_interval=30, ping_timeout=60, max_size=1024*1024) as websocket:
@@ -739,7 +811,32 @@ class PubSub:
                 await asyncio.sleep(2 * (2 ** retries))
                 await self.connect_to_peer(uri, retries + 1)
             else:
-                await self.connect_to_peer(uri, retries=self.max_retries)  # Trigger relay
+                await self.connect_to_peer(uri, retries=self.max_retries)
+    
+    async def ensure_relay_connection(self, target_uri):
+        """Ensure a relay connection exists for the target URI."""
+        if target_uri in self.relay_peers and self.relay_peers[target_uri].closed:
+            del self.relay_peers[target_uri]
+
+        if target_uri not in self.relay_peers:
+            try:
+                boot_ws = await websockets.connect(
+                    self.boot_node_uri,
+                    max_size=1024*1024,
+                    ping_interval=30,
+                    ping_timeout=60
+                )
+                self.relay_peers[target_uri] = boot_ws
+                logger.info(f"Established relay connection to {target_uri} via boot node")
+                # Register with boot node to ensure it knows our URI
+                await boot_ws.send(self.create_message(self.MSG_REGISTER_PEER, self.my_uri))
+                # Start handling responses for this relay connection
+                asyncio.create_task(self.handle_relay_responses(boot_ws, target_uri))
+                return True
+            except Exception as e:
+                logger.error(f"Failed to establish relay connection for {target_uri}: {e}")
+                return False
+        return True
 
     async def register_with_boot_node(self, uri, my_uri, retries=0):
         if retries >= self.max_retries:
@@ -761,7 +858,7 @@ class PubSub:
                     msg = self.parse_message(message)
                     if msg['type'] == self.MSG_PEER_LIST:
                         peers = msg['data'] if msg.get('data') else []
-                        logger.info(f"Received peer list from boot node: {peers}")
+                        logger.info(f"Received peer list from boot node ..: {peers}")
                         valid_peers = [p for p in peers if p.startswith('ws://') and p != my_uri]
                         self.known_peers.update(valid_peers)
                         self.save_peers()
