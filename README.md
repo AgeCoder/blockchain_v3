@@ -1,71 +1,158 @@
-Decentralized P2P Platform
-   
-A production-ready distributed system for real-time data processing and secure networking, built solo to tackle advanced challenges in fault-tolerant P2P communication, cryptographic computation, and cross-platform deployment. This project powers a scalable FastAPI backend, a WebSocket-driven real-time core, and a Next.js frontend, all bundled into a Tauri desktop app. It achieves 99.9% peer synchronization reliability and 30% reduced latency, leveraging a custom PubSub system over STUN/TURN for robust global networking.
-Tech Stack: Python, FastAPI, DuckDB, WebSocket, SHA256, STUN/TURN, Next.js, Web3.js, Tauri, PyInstaller, IndexedDB
-Architecture
 
-Backend Core: FastAPI with WebSocket orchestrates real-time data validation, SHA256-based cryptographic processing, and dynamic load-adaptive logic. DuckDB provides low-latency, columnar storage for high-throughput queries.
-P2P Networking: Custom PubSub implementation uses STUN/TURN for NAT traversal and boot nodes for peer discovery. Relay-based failover ensures 99.9% sync reliability under adverse network conditions (e.g., NAT asymmetry or packet loss).
-Frontend: Next.js with Web3.js drives a reactive UI, featuring encrypted IndexedDB storage, a real-time data explorer, and compute-intensive in-browser tasks, managed via Context API for optimized state handling.
-Deployment: Tauri and PyInstaller package the stack (backend, database, frontend) into a single, self-contained executable, enabling zero-config deployment across platforms.
-Optimizations: Streamlined data pipelines cut latency by 30%; adaptive processing logic stabilizes performance under variable loads.
+---
 
-Key Challenges Solved
+# 🔗 Decentralized P2P Platform
 
-NAT Traversal: STUN/TURN integration with boot node discovery handles complex NAT scenarios, achieving near-perfect peer connectivity.
-Fault Tolerance: Relay fallback and dynamic peer rebalancing maintain sync integrity during network disruptions.
-Performance: Optimized SHA256 computation and DuckDB query paths reduce processing overhead, critical for real-time workloads.
-Security: Encrypted IndexedDB storage and WebSocket-based secure channels ensure data integrity and confidentiality.
+A **production-grade** decentralized system for real-time data processing and secure peer-to-peer networking. This project was developed independently to address complex challenges in fault-tolerant communication, cryptographic computation, and seamless cross-platform deployment.
 
-Getting Started
-Prerequisites
+It features a **scalable FastAPI backend**, **WebSocket-powered real-time engine**, and a **Next.js frontend**, all integrated into a **Tauri desktop app**. The system achieves **99.9% peer synchronization reliability** and **30% latency reduction**, powered by a custom PubSub architecture over **STUN/TURN** for robust global networking.
 
-Python 3.11+
-Node.js 18+
-Tauri CLI (cargo install tauri-cli)
-Git
+---
 
-Installation
-# Clone the repo
+## 🛠 Tech Stack
+
+* **Backend:** Python, FastAPI, DuckDB, WebSocket, SHA256
+* **Frontend:** Next.js, Web3.js, Context API, IndexedDB (Encrypted)
+* **P2P Layer:** Custom PubSub over STUN/TURN
+* **Packaging:** Tauri, PyInstaller
+* **Others:** Git, Node.js, pnpm, Python 3.11+
+
+---
+
+## ⚙️ Architecture Overview
+
+### 🔁 Backend Core
+
+* Built with **FastAPI** and **WebSockets** to enable real-time communication.
+* Uses **SHA256** for cryptographic data validation.
+* **DuckDB** supports low-latency, columnar in-memory queries.
+
+### 🌐 P2P Networking
+
+* Custom **PubSub system** handles peer discovery and message relaying.
+* Utilizes **STUN/TURN** for NAT traversal and **boot nodes** for discovery.
+* Supports **relay-based failover**, achieving near-perfect reliability under poor network conditions.
+
+### 🖥 Frontend
+
+* Developed with **Next.js** and **Web3.js** for a reactive interface.
+* Local-first storage using **IndexedDB** with encryption.
+* Complex client-side tasks managed with **React Context API**.
+
+### 💻 Deployment
+
+* Packaged into a single executable via **Tauri** and **PyInstaller**.
+* Enables cross-platform, zero-config deployments.
+
+### 🚀 Performance Optimizations
+
+* Streamlined pipelines deliver **30% lower latency**.
+* Adaptive load logic ensures stable performance during high traffic or limited system resources.
+
+---
+
+## ✅ Key Challenges Solved
+
+* **NAT Traversal:** Reliable peer connectivity using STUN/TURN + boot node discovery.
+* **Fault Tolerance:** Dynamic peer rebalancing and relay fallback during outages.
+* **Performance:** Optimized SHA256 computation and DuckDB read paths for high-throughput workloads.
+* **Security:** Secure WebSocket channels and encrypted browser-side storage (IndexedDB).
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+* Python `3.11+`
+* Node.js `18+`
+* Tauri CLI (`cargo install tauri-cli`)
+* Git
+
+---
+
+## 🔧 Installation
+
+```bash
+# Clone the repository
 git clone https://github.com/AgeCoder/blockchain_v3.git
 cd blockchain_v3
+```
 
-# Backend setup
+### Backend Setup
+
+```bash
 cd backend
 pip install -r requirements.txt
 python main.py
+```
 
-# Frontend setup
+### Frontend Setup
+
+```bash
 cd frontend
 pnpm install
 pnpm run dev
+```
 
-# Desktop app (optional)
-You need to make server.exe in backend and then past that in src-tauri and in src 
+### Desktop App (Optional)
+
+```bash
+# Build backend executable (server.exe) using PyInstaller
+# Place server.exe in frontend/src-tauri and frontend/src
+
 cd frontend
-pnpm run tauri dev
+pnpm run tauri dev     # For development
+pnpm run tauri build   # For production build
+```
 
-# Desktop app (optional)
-pnpm run tauri build
+---
 
-Running the System
+## 🧪 Running the System
 
-Start the backend (python main.py) to initialize DuckDB and WebSocket services on http://localhost:3221.
-Launch the frontend (npm run dev) to access the UI at http://localhost:3000.
-For desktop, build the Tauri app (tauri build) and run the generated executable.
+* **Backend**: `python main.py` — Starts DuckDB + WebSocket at `http://localhost:3221`
+* **Frontend**: `pnpm run dev` — Runs UI at `http://localhost:3000`
+* **Desktop**: `pnpm run tauri build` — Creates platform-specific executable
 
-Notes
+---
 
-Ensure ports 3221 (backend) and 3000 (frontend) are open.
-STUN/TURN requires internet access; configure custom servers in backend/config.yaml if needed.
-IndexedDB encryption supports modern browsers (Chrome/Edge 90+).
+## ⚠️ Notes
 
-Contributing
-We welcome contributions! Please read our Contributing Guide and Code of Conduct. To get started:
+* Ensure the following ports are open:
 
-Fork the repo and create a feature branch (git checkout -b feature/your-feature).
-Commit changes with clear messages (git commit -m "Add feature X").
-Push and open a PR with detailed descriptions.
+  * `3221` for backend
+  * `3000` for frontend
+* Internet access required for STUN/TURN.
 
-Testing
-#
+  * Custom servers can be configured in `backend/config.yaml`.
+* Encrypted **IndexedDB** works on modern browsers (Chrome/Edge 90+).
+
+---
+
+## 🤝 Contributing
+
+We welcome contributions! To get started:
+
+1. Fork the repo and create your feature branch:
+
+   ```bash
+   git checkout -b feature/your-feature
+   ```
+2. Commit changes with clear messages:
+
+   ```bash
+   git commit -m "Add feature X"
+   ```
+3. Push to your fork and open a Pull Request with a detailed description.
+
+Also check our [Contributing Guide](CONTRIBUTING.md) and [Code of Conduct](CODE_OF_CONDUCT.md).
+
+---
+
+## 🧪 Testing (Coming Soon)
+
+Unit tests and end-to-end tests will be added in future updates.
+
+---
+
+
